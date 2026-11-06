@@ -1,5 +1,161 @@
-@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
 
 @theme {
-  --font-sans: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, sans-serif;
+
+  --color-primary: #2a276e;
+  --color-primary-hover: #35318a;
+  --color-deep: #0f0e2e;
+  --color-accent: #f6e70b;
+  --color-accent-hover: #ffef3d;
+  --color-on-accent: #0f0e2e;
+
+  --color-surface: #ffffff;
+  --color-canvas: #f4f4fa;
+  --color-border: #d9d8ea;
+  --color-border-strong: #8d8bb5;
+  --color-text: #0f0e2e;
+  --color-text-muted: #55547a;
+  --color-on-primary: #ffffff;
+  --color-on-primary-muted: #c9c8e6;
+
+  --color-success: #0f6b3f;
+  --color-success-soft: #e3f4ea;
+  --color-danger: #b3261e;
+  --color-danger-soft: #fde8e6;
+  --color-warning: #7a5a00;
+  --color-warning-soft: #fff6c2;
+  --color-info-soft: #e8e8f7;
+
+  --color-blue-1: #0f0e2e;
+  --color-blue-2: #2a276e;
+  --color-blue-3: #3b4aa8;
+  --color-blue-4: #1f5fbf;
+
+  --color-payroll-card: #171442;
+  --color-payroll-panel: #121032;
+  --color-payroll-border: #302a79;
+  --color-payroll-secondary: #b7b5ff;
+  --color-payroll-action: #ffe600;
+  --color-payroll-warning: #ffc629;
+  --color-payroll-warning-panel: #302506;
+  --color-payroll-warning-border: #66500b;
+  --color-payroll-badge: #28216c;
+  --color-payroll-warning-badge: #382b04;
+
+  --radius-control: 0.625rem;
+  --radius-card: 1.25rem;
+  --radius-payroll: 1.75rem;
+  --radius-payroll-panel: 1.125rem;
+  --radius-payroll-button: 1.0625rem;
+  --spacing-payroll-warning: 7.8125rem;
+  --text-payroll-title: 2.625rem;
+  --shadow-card: 0 24px 60px -24px rgb(15 14 46 / 0.35);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+  }
+  body {
+    background: var(--color-canvas);
+    color: var(--color-text);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 3px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  .on-dark :focus-visible {
+    outline-color: var(--color-accent);
+  }
+}
+
+@layer utilities {
+  .glass-card {
+    background: rgb(255 255 255 / 0.82);
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border: 1px solid rgb(255 255 255 / 0.55);
+    box-shadow: 0 24px 60px -20px rgb(15 14 46 / 0.55), inset 0 1px 0 rgb(255 255 255 / 0.6);
+  }
+  .glass-panel {
+    background: rgb(255 255 255 / 0.1);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgb(255 255 255 / 0.2);
+  }
+  .bg-animated {
+    background: linear-gradient(120deg, var(--color-blue-1), var(--color-blue-2), var(--color-blue-3), var(--color-blue-4), var(--color-blue-2), var(--color-blue-1));
+    background-size: 300% 300%;
+    animation: blue-shift 18s ease-in-out infinite;
+  }
+}
+
+@keyframes blue-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-animated { animation: none; }
+}
+
+/* Administrator portal: dark theme and elevation. Scoped to .dark so the sign-in flow is untouched. */
+.dark {
+  color-scheme: dark;
+  --color-primary: #b4b2ff;
+  --color-primary-hover: #d0cfff;
+  --color-on-primary: #0f0e2e;
+  --color-canvas: #0a0a1f;
+  --color-surface: #14143a;
+  --color-border: #2a2a58;
+  --color-border-strong: #5a5a96;
+  --color-text: #ededff;
+  --color-text-muted: #aeaed6;
+  --color-success: #5fe0a0;
+  --color-success-soft: #0f2e20;
+  --color-danger: #ff9a92;
+  --color-danger-soft: #3a1618;
+  --color-warning: #f2d467;
+  --color-warning-soft: #33290a;
+  --color-info-soft: #1f1f50;
+}
+
+@layer utilities {
+  .elevate {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-text) 9%, transparent),
+      0 1px 2px -1px color-mix(in oklab, var(--color-text) 10%, transparent),
+      0 8px 24px -14px color-mix(in oklab, var(--color-deep) 45%, transparent);
+  }
+  .payroll-period-card {
+    --color-accent: var(--color-payroll-action);
+    --color-accent-hover: var(--color-payroll-action);
+    --color-on-accent: var(--color-payroll-card);
+  }
+}
+
+/* My Payslips: print only the payslip, in a light theme, without app chrome. */
+@media print {
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    box-shadow: none;
+    --color-surface: #ffffff;
+    --color-canvas: #f4f4fa;
+    --color-text: #0f0e2e;
+    --color-text-muted: #55547a;
+    --color-border: #d9d8ea;
+    --color-accent: #f6e70b;
+    --color-on-accent: #0f0e2e;
+    --color-success: #0f6b3f;
+    --color-success-soft: #e3f4ea;
+    background: #ffffff;
+    color: #0f0e2e;
+  }
 }

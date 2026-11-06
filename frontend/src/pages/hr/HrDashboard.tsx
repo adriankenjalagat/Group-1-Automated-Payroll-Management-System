@@ -1,0 +1,6 @@
+export { HrDashboard } from '../../portal/hr/HrDashboard'
+export { EmployeeRecords } from '../../portal/hr/EmployeeRecords'
+export { DocumentVerification } from '../../portal/hr/DocumentVerification'
+export { AttendanceLeave } from '../../portal/hr/AttendanceLeave'
+export { Transmittals } from '../../portal/hr/Transmittals'
+export { HrMyAccount } from '../../portal/hr/HrMyAccount'

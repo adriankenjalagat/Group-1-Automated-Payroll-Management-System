@@ -1,0 +1,37 @@
+import type { Request, Response } from 'express'
+import { authService } from './auth.service'
+
+export const authController = {
+  login(req: Request, res: Response): void {
+    const { identifier, username, password } = req.body as {
+      identifier?: string
+      username?: string
+      password?: string
+    }
+
+    const loginId = identifier || username
+    if (!loginId || !password) {
+      res
+        .status(400)
+        .json({ message: 'Email/username and password are required.' })
+      return
+    }
+
+    const outcome = authService.login(loginId, password)
+
+    if (!outcome.ok) {
+      if (outcome.reason === 'locked') {
+        res.status(423).json({ message: 'Account locked.' })
+        return
+      }
+      res.status(401).json({ message: 'Invalid email, username, or password.' })
+      return
+    }
+
+    res.status(200).json({
+      message: 'Login successful.',
+      token: outcome.token,
+      user: outcome.user,
+    })
+  },
+}

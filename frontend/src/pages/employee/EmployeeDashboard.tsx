@@ -1,0 +1,6 @@
+export { EmployeeDashboard } from '../../portal/EmployeeDashboard'
+export { MySubmissions } from '../../portal/MySubmissions'
+export { SubmissionStatus } from '../../portal/SubmissionStatus'
+export { MyPayslips } from '../../portal/MyPayslips'
+export { EmployeeNotifications } from '../../portal/EmployeeNotifications'
+export { EmployeeMyAccount } from '../../portal/EmployeeMyAccount'

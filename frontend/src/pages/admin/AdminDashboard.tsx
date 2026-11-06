@@ -1,0 +1,5 @@
+export { AdminPortal } from '../../admin/AdminPortal'
+export { Dashboard as AdminDashboard } from '../../admin/Dashboard'
+export { UserManagement } from '../../admin/UserManagement'
+export { PayrollConfiguration } from '../../admin/PayrollConfiguration'
+export { AuditLogs } from '../../admin/AuditLogs'
