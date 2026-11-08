@@ -21,7 +21,7 @@ app.use(
 app.use(express.json())
 
 // Health check route
-app.get('/', (_req, res) => {
+app.get(['/', '/api/health'], (_req, res) => {
   res.status(200).json({
     message: 'MSU-Naawan Automated Payroll Management System API is running.',
   })

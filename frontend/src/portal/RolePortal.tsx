@@ -1,5 +1,6 @@
 import clsx from "clsx"
 import { useEffect, useRef, useState } from "react"
+import { employeesApi, submissionsApi, payslipsApi, attendanceApi } from "../api"
 import logo from "../assets/logo.png"
 import { Button, Icon } from "../MsuPayroll"
 import { users, type MockUser } from "../auth/mockData"
@@ -22,7 +23,6 @@ import {
 } from "./EmployeeNotifications"
 import {
   SupervisorDashboardComplete,
-  SupervisorDemoNotice,
   SupervisorHeaderBell,
   SupervisorHistory,
   SupervisorMyAccount,
@@ -34,7 +34,6 @@ import {
   type SupervisorReviewSection,
 } from "./supervisor/SupervisorPortal"
 import {
-  initialSupervisorDemoEmployees,
   initialSupervisorDemoSubmissions,
   initialSupervisorNotifications,
   type SupervisorNotification,
@@ -272,7 +271,7 @@ export function RolePortal({
   user: MockUser
   initialRole: PortalRole
   onSignOut: () => void
-  onSwitchDemo: (user: MockUser, role: PortalRole) => void
+  onSwitchDemo?: (user: MockUser, role: PortalRole) => void
 }) {
   const [dark, setDark] = useTheme()
   const [role, setRole] = useState<PortalRole>(initialRole)
@@ -424,6 +423,40 @@ export function RolePortal({
   )
   const first = useRef(true)
 
+  useEffect(() => {
+    employeesApi
+      .getAll()
+      .then((data) => {
+        if (data && data.length) setHrEmployees(data)
+      })
+      .catch((err) => console.warn("Could not load employees from API:", err))
+
+    submissionsApi
+      .getAll()
+      .then((data) => {
+        if (data) {
+          setEmployeeSubmissions(data)
+          setVerificationSubmissions(data as any)
+          setSupervisorSubmissions(data as any)
+        }
+      })
+      .catch((err) => console.warn("Could not load submissions from API:", err))
+
+    payslipsApi
+      .getAll()
+      .then((data) => {
+        if (data && data.length) setPublishedPayslips(data)
+      })
+      .catch((err) => console.warn("Could not load payslips from API:", err))
+
+    attendanceApi
+      .getState()
+      .then((data) => {
+        if (data && data.attendanceRecords) setAttendanceState(data)
+      })
+      .catch((err) => console.warn("Could not load attendance from API:", err))
+  }, [])
+
   // The signed-in employee is the HR record linked to this account. HR edits flow into Employee pages.
   const currentHrEmployee =
     employeeForUsername(user.username, hrEmployees) ?? null
@@ -436,14 +469,17 @@ export function RolePortal({
     (item) =>
       Boolean(user.accountId) && item.recipientAccountId === user.accountId,
   )
-  const demoUsers = portalRoles.flatMap((portalRole) =>
-    users
-      .filter(
-        (demoUser) =>
-          demoUser.status === "active" && demoUser.roles.includes(portalRole),
+
+  const handleSupervisorSubmissionChanged = (
+    submission: VerificationSubmission,
+  ) => {
+    submissionsApi
+      .update(submission.id, submission)
+      .catch((err) =>
+        console.warn("Failed to update submission on backend:", err),
       )
-      .map((demoUser) => ({ user: demoUser, role: portalRole })),
-  )
+  }
+
 
   const items = roleNav[role]
   const onAccount = pageId === "account"
@@ -594,7 +630,7 @@ export function RolePortal({
   useEffect(() => {
     setSupervisorNotifications((items) => {
       const additions = supervisorSubmissions.flatMap((submission) => {
-        const employee = initialSupervisorDemoEmployees.find(
+        const employee = hrEmployees.find(
           (record) =>
             record.employeeId === submission.employeeId &&
             record.supervisor === user.name,
@@ -1195,7 +1231,7 @@ export function RolePortal({
                       user: result.event.cashierName,
                       action: "Payroll marked Released",
                       remarks:
-                        "Local demonstration release transition recorded; no bank transfer was performed.",
+                        "Payroll release transition recorded.",
                     },
                   ],
             },
@@ -1300,45 +1336,11 @@ export function RolePortal({
               </div>
               <div className="mt-auto">
                 <div className="border-t border-border px-5 py-4">
-                  <SelectField
-                    label="Demo Switcher"
-                    value={user.username}
-                    hint="Prototype/Demo feature only. Production access must use role-based authentication."
-                    onChange={(event) => {
-                      const selected = demoUsers.find(
-                        ({ user: demoUser }) =>
-                          demoUser.username === event.target.value,
-                      )
-                      if (!selected) return
-                      setRole(selected.role)
-                      setPageId("dashboard")
-                      if (window.innerWidth < 1024) setMenu(false)
-                      onSwitchDemo(selected.user, selected.role)
-                    }}
-                  >
-                    {portalRoles.map((portalRole) => {
-                      const roleUsers = demoUsers.filter(
-                        (entry) => entry.role === portalRole,
-                      )
-                      if (!roleUsers.length) return null
-                      return (
-                        <optgroup
-                          key={portalRole}
-                          label={portalName[portalRole]}
-                        >
-                          {roleUsers.map(({ user: demoUser }) => (
-                            <option
-                              key={demoUser.username}
-                              value={demoUser.username}
-                            >
-                              {demoUser.name} ({demoUser.username})
-                            </option>
-                          ))}
-                        </optgroup>
-                      )
-                    })}
-                  </SelectField>
+                  <p className="text-xs uppercase tracking-wider font-semibold text-text-muted">Access Level</p>
+                  <p className="mt-1 text-sm font-semibold text-text">{portalName[role]}</p>
+                  <p className="text-xs text-text-muted truncate">{user.office}</p>
                 </div>
+
                 <div className="border-t border-border px-4 py-3">
                   <Button
                     type="button"
@@ -1431,11 +1433,6 @@ export function RolePortal({
             className="flex-1 px-3 sm:px-6 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]"
           >
             <div className="mx-auto max-w-6xl">
-              {role === "Immediate Supervisor" && (
-                <div className="mb-6">
-                  <SupervisorDemoNotice />
-                </div>
-              )}
               {onAccount ? (
                 <div className="grid gap-6">
                   {role !== "Accountant" &&
@@ -1540,7 +1537,7 @@ export function RolePortal({
                 current.id === "dashboard" ? (
                 <SupervisorDashboardComplete
                   submissions={supervisorSubmissions}
-                  employees={initialSupervisorDemoEmployees}
+                  employees={hrEmployees}
                   user={user}
                   onPending={openSupervisorPending}
                   onReview={openSupervisorReview}
@@ -1552,7 +1549,7 @@ export function RolePortal({
                 <SupervisorPending
                   key={supervisorQueueTab}
                   submissions={supervisorSubmissions}
-                  employees={initialSupervisorDemoEmployees}
+                  employees={hrEmployees}
                   user={user}
                   initialTab={supervisorQueueTab}
                   onReview={openSupervisorReview}
@@ -1563,10 +1560,10 @@ export function RolePortal({
                   key={`${supervisorSubmissionId ?? "none"}-${supervisorReviewSection ?? "default"}`}
                   submissions={supervisorSubmissions}
                   setSubmissions={setSupervisorSubmissions}
-                  employees={initialSupervisorDemoEmployees}
+                  employees={hrEmployees}
                   user={user}
                   setNotifications={setSupervisorNotifications}
-                  onSubmissionChanged={() => undefined}
+                  onSubmissionChanged={handleSupervisorSubmissionChanged}
                   selectedId={supervisorSubmissionId}
                   initialSection={supervisorReviewSection}
                   onBrowse={() => openSupervisorPending()}
@@ -1578,7 +1575,7 @@ export function RolePortal({
                 <SupervisorHistory
                   key={`${supervisorHistoryContext.tab ?? "all"}-${supervisorHistoryContext.decisionId ?? "none"}`}
                   submissions={supervisorSubmissions}
-                  employees={initialSupervisorDemoEmployees}
+                  employees={hrEmployees}
                   user={user}
                   initialTab={supervisorHistoryContext.tab}
                   initialDecisionId={supervisorHistoryContext.decisionId}
@@ -1589,7 +1586,7 @@ export function RolePortal({
                 <SupervisorNotifications
                   notifications={mySupervisorNotifications}
                   setNotifications={setSupervisorNotifications}
-                  employees={initialSupervisorDemoEmployees}
+                  employees={hrEmployees}
                   onView={openSupervisorReview}
                 />
               ) : role === "Cost Center Signatory" &&

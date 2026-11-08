@@ -1,26 +1,30 @@
-export interface Payslip {
-  id: number
-  employeeId: number
+export interface PayslipRecord {
+  id: string | number
+  employeeId: string | number
   period: string
   grossPay: number
   deductions: number
   netPay: number
+  payrollTitle?: string
+  disbursedAt?: string
+  status?: string
 }
 
-const payslips: Payslip[] = [
-  {
-    id: 1,
-    employeeId: 1,
-    period: 'November 2026',
-    grossPay: 31320,
-    deductions: 2820,
-    netPay: 28500,
-  },
-]
+const payslips: PayslipRecord[] = []
 
 export const payslipsService = {
-  findAll(): Payslip[] {
+  findAll(): PayslipRecord[] {
     return payslips
   },
-}
 
+  findByEmployee(employeeId: string | number): PayslipRecord[] {
+    return payslips.filter(
+      (p) => String(p.employeeId).toLowerCase() === String(employeeId).toLowerCase(),
+    )
+  },
+
+  create(record: PayslipRecord): PayslipRecord {
+    payslips.push(record)
+    return record
+  },
+}

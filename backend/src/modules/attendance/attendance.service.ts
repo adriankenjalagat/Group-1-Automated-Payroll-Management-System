@@ -1,26 +1,31 @@
-export interface AttendanceSummary {
-  id: number
-  employeeId: number
-  period: string
-  daysWorked: number
-  absences: number
-  verifiedBySupervisor: boolean
+export interface AttendanceModuleState {
+  records: any[]
+  concerns: any[]
+  approvedRecords: any[]
 }
 
-const attendanceRecords: AttendanceSummary[] = [
-  {
-    id: 1,
-    employeeId: 1,
-    period: 'November 2026',
-    daysWorked: 22,
-    absences: 0,
-    verifiedBySupervisor: true,
-  },
-]
+const attendanceState: AttendanceModuleState = {
+  records: [],
+  concerns: [],
+  approvedRecords: [],
+}
 
 export const attendanceService = {
-  findAll(): AttendanceSummary[] {
-    return attendanceRecords
+  getState(): AttendanceModuleState {
+    return attendanceState
+  },
+
+  updateState(partial: Partial<AttendanceModuleState>): AttendanceModuleState {
+    if (partial.records) attendanceState.records = partial.records
+    if (partial.concerns) attendanceState.concerns = partial.concerns
+    if (partial.approvedRecords) attendanceState.approvedRecords = partial.approvedRecords
+    return attendanceState
+  },
+
+  resolveConcern(concernId: string, resolution: any): boolean {
+    const idx = attendanceState.concerns.findIndex((c) => c.id === concernId)
+    if (idx === -1) return false
+    attendanceState.concerns[idx] = { ...attendanceState.concerns[idx], ...resolution }
+    return true
   },
 }
-

@@ -11,8 +11,9 @@ export type AuthOutcome =
 export const authService = {
   login(identifier: string, password: string): AuthOutcome {
     const user = usersService.findByIdentifier(identifier)
+    const expectedPassword = user?.password || DEMO_PASSWORD
 
-    if (!user || password !== DEMO_PASSWORD) {
+    if (!user || password !== expectedPassword) {
       return { ok: false, reason: 'invalid' }
     }
 

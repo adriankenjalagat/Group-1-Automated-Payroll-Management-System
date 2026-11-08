@@ -21,12 +21,22 @@ export type MockUser = {
   name: string
   email: string
   username: string
+  password?: string
   office: string
   roles: Role[]
   status: "active" | "locked" | "pending"
 }
 
 export const users: MockUser[] = [
+  {
+    name: "Angel Queen Catian",
+    email: "angelqueen.catian@msunaawan.edu.ph",
+    username: "angelqueen.catian",
+    password: "AN1021176an",
+    office: "College of Business and Information Technology",
+    roles: ["Employee"],
+    status: "active",
+  },
   {
     name: "Maria Santos",
     email: "maria.santos@msunaawan.example",

@@ -81,7 +81,6 @@ export function HrDashboard({
           <p id="page-title" role="heading" aria-level={1} tabIndex={-1} className="text-2xl font-semibold leading-tight sm:text-3xl">HR Dashboard</p>
           <p className="mt-2 text-sm leading-relaxed text-text-muted">Overview of employee records, document verification, attendance, and transmittals.</p>
         </div>
-        <Tag kind="placeholder">Fictional demonstration data</Tag>
       </section>
 
       <div className="grid gap-6 xl:grid-cols-2">
@@ -167,10 +166,6 @@ export function HrDashboard({
           </div>
         </Preview>
       </div>
-
-      <p className="text-xs leading-relaxed text-text-muted">
-        These previews read the same local demonstration records as the HR pages. They are not connected to a backend or to the Employee portal.
-      </p>
     </div>
   )
 }

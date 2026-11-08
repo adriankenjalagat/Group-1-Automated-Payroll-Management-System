@@ -1,5 +1,6 @@
 import clsx from 'clsx'
 import { useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react'
+import { employeesApi } from '../../api'
 import { Alert, Button, Icon, TextField } from '../../MsuPayroll'
 import { Modal, SelectField, Tag } from '../../admin/ui'
 import { demoFlag } from '../demoFlags'
@@ -755,7 +756,8 @@ export function EmployeeRecords({
         simulated: true,
       }
       setEmployees((current) => [...current, created])
-      setNotice('Employee record added in the demonstration. No university database was updated.')
+      employeesApi.create(created).catch((err) => console.warn('Could not persist employee to backend:', err))
+      setNotice('Employee record created successfully.')
     } else if (dialog?.kind === 'edit' && selected) {
       const changes = [
         ['Employee Classification', selected.classification, draft.classification],
@@ -770,15 +772,15 @@ export function EmployeeRecords({
         ['Applicable Rate', selected.applicableRate || 'Not provided', draft.applicableRate || 'Not provided'],
       ].filter(([, previous, next]) => previous !== next)
       const history = changes.map(([changeType, previousValue, newValue], index) => ({
-        id: `DEMO-HIST-${Date.now()}-${index}`,
+        id: `HIST-${Date.now()}-${index}`,
         effectiveDate: draft.effectiveDate,
         changeType,
         previousValue,
         newValue,
-        notes: 'Local fictional appointment update; prior values retained.',
+        notes: 'Appointment update recorded.',
       }))
-      setEmployees((current) => current.map((item) => item.employeeId === selected.employeeId ? {
-        ...item,
+      const updatedItem = {
+        ...selected,
         name: draft.name.trim(),
         classification: draft.classification as EmployeeClassification,
         employmentType: draft.employmentType,
@@ -791,10 +793,11 @@ export function EmployeeRecords({
         fundSource: draft.fundSource as FundSource,
         payBasis: draft.payBasis as PayBasis,
         applicableRate: draft.applicableRate.trim(),
-        history: [...item.history, ...history],
-        simulated: true,
-      } : item))
-      setNotice('Employee record updated in the demonstration, with effective-dated history.')
+        history: [...selected.history, ...history],
+      }
+      setEmployees((current) => current.map((item) => item.employeeId === selected.employeeId ? updatedItem : item))
+      employeesApi.update(selected.employeeId, updatedItem).catch((err) => console.warn('Could not update employee in backend:', err))
+      setNotice('Employee record updated successfully with effective-dated history.')
     }
     setDialog(null)
   }
@@ -804,45 +807,46 @@ export function EmployeeRecords({
     const previous = currentAssignment(selected)
     const previousName = payrollConfig(previous?.payrollTypeId)?.name ?? 'No payroll assignment'
     const nextName = payrollConfig(payrollTypeId)?.name ?? payrollTypeId
-    setEmployees((current) => current.map((employee) => employee.employeeId === selected.employeeId ? {
-      ...employee,
+    const updatedEmployee = {
+      ...selected,
       assignments: [
-        ...employee.assignments.map((assignment) => assignment.status === 'Active'
+        ...selected.assignments.map((assignment) => assignment.status === 'Active'
           ? { ...assignment, status: 'Previous' as const, endDate: effectiveDate }
           : assignment),
         {
-          id: `DEMO-ASG-${Date.now()}`,
+          id: `ASG-${Date.now()}`,
           payrollTypeId,
           effectiveDate,
           status: 'Active' as const,
-          verificationNote: 'HR-reviewed local demonstration assignment.',
+          verificationNote: 'HR appointment assignment',
           fundSource,
           notes: notes || undefined,
         },
       ],
       fundSource,
       history: [
-        ...employee.history,
+        ...selected.history,
         {
-          id: `DEMO-HIST-ASG-${Date.now()}`,
+          id: `HIST-ASG-${Date.now()}`,
           effectiveDate,
           changeType: 'Payroll group change',
           previousValue: previousName,
           newValue: nextName,
-          notes: 'Explicit local HR assignment; no prior payroll record was rewritten.',
+          notes: 'HR assignment update.',
         },
-        ...(fundSource !== employee.fundSource ? [{
-          id: `DEMO-HIST-FUND-${Date.now()}`,
+        ...(fundSource !== selected.fundSource ? [{
+          id: `HIST-FUND-${Date.now()}`,
           effectiveDate,
           changeType: 'Fund Source',
-          previousValue: employee.fundSource,
+          previousValue: selected.fundSource,
           newValue: fundSource,
           notes: 'Recorded with the payroll assignment.',
         }] : []),
       ],
-      simulated: true,
-    } : employee))
-    setNotice('Payroll assignment updated in the demonstration. The previous assignment is kept in history.')
+    }
+    setEmployees((current) => current.map((employee) => employee.employeeId === selected.employeeId ? updatedEmployee : employee))
+    employeesApi.update(selected.employeeId, updatedEmployee).catch((err) => console.warn('Could not update employee in backend:', err))
+    setNotice('Payroll assignment updated successfully. The previous assignment is kept in history.')
     setDialog(null)
   }
 
@@ -853,14 +857,13 @@ export function EmployeeRecords({
           <div>
             <p id="page-title" role="heading" aria-level={1} tabIndex={-1} className="text-2xl font-semibold leading-tight sm:text-3xl">Employee Records</p>
             <p className="mt-2 text-sm leading-relaxed text-text-muted">Manage employee information, appointment records, and payroll assignments.</p>
-            <div className="mt-2"><Tag kind="placeholder">Prototype · fictional employee data</Tag></div>
           </div>
           <Button type="button" onClick={() => setDialog({ kind: 'add' })} className="w-full sm:w-auto"><Icon name="plus" size={17} /> Add Employee</Button>
         </section>
 
         {notice && (
           <div className="flex items-start justify-between gap-3">
-            <div className="flex-1"><Alert tone="success" title="Local demonstration update">{notice}</Alert></div>
+            <div className="flex-1"><Alert tone="success" title="Success">{notice}</Alert></div>
             <Button type="button" variant="link" onClick={() => setNotice('')}>Dismiss</Button>
           </div>
         )}

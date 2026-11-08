@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react'
-import { apiClient } from '../api/client'
+import { authApi } from '../api/auth'
 import { Alert, Button, PasswordField, StatusMark, TextField } from '../MsuPayroll'
 import { BackLink, ViewHeader } from './AuthShell'
-import { DEMO_PASSWORD, findUser, type MockUser } from './mockData'
+import type { MockUser } from './mockData'
 
 const REMEMBER_KEY = 'msu-remembered-id'
-const wait = (ms = 900) => new Promise((r) => setTimeout(r, ms))
+
+const wait = (ms = 400) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export function SignIn({
   onForgot,
@@ -31,39 +32,16 @@ export function SignIn({
     if (Object.keys(next).length) return
     setLoading(true)
     try {
-      const response = await apiClient.post<{ user: MockUser; status?: string }>(
-        '/auth/login',
-        { identifier: identifier.trim(), password },
-      )
+      const response = await authApi.login(identifier, password)
       setLoading(false)
       if (remember) localStorage.setItem(REMEMBER_KEY, identifier.trim())
       else localStorage.removeItem(REMEMBER_KEY)
+      if (response.token) {
+        localStorage.setItem('msu_token', response.token)
+        localStorage.setItem('msu_user', JSON.stringify(response.user))
+      }
       return onSuccess(response.user)
     } catch (err) {
-      // Fallback to local mockData when backend is offline
-      if (err instanceof TypeError) {
-        await wait()
-        setLoading(false)
-        const user = findUser(identifier)
-        if (user && user.status === 'active' && password === DEMO_PASSWORD) {
-          if (remember) localStorage.setItem(REMEMBER_KEY, identifier.trim())
-          else localStorage.removeItem(REMEMBER_KEY)
-          return onSuccess(user)
-        }
-        if (user && user.status === 'locked' && password === DEMO_PASSWORD) {
-          return setFormError({
-            tone: 'warning',
-            title: 'Account locked',
-            text: 'Your account has been locked after repeated failed attempts. Contact a System Administrator to unlock it.',
-          })
-        }
-        return setFormError({
-          tone: 'danger',
-          title: 'Sign-in failed',
-          text: 'The email, username, or password you entered is incorrect. Check your details and try again.',
-        })
-      }
-
       setLoading(false)
       const msg = err instanceof Error ? err.message : ''
       if (msg.toLowerCase().includes('locked')) {
@@ -73,17 +51,32 @@ export function SignIn({
           text: 'Your account has been locked after repeated failed attempts. Contact a System Administrator to unlock it.',
         })
       }
+      if (msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('network')) {
+        return setFormError({
+          tone: 'danger',
+          title: 'Connection error',
+          text: 'Unable to connect to the payroll API server. Ensure the backend server is running.',
+        })
+      }
       setFormError({
         tone: 'danger',
         title: 'Sign-in failed',
-        text: 'The email, username, or password you entered is incorrect. Check your details and try again.',
+        text: msg || 'The email, username, or password you entered is incorrect. Check your details and try again.',
       })
     }
   }
 
   return (
     <>
-      <ViewHeader title="Sign in to your account" subtitle="Enter your university email or assigned username to continue." />
+      <ViewHeader
+        title="Sign in to your account"
+        subtitle={
+          <>
+            Enter your university email or assigned username to
+            <br className="hidden sm:inline" /> continue.
+          </>
+        }
+      />
       <form onSubmit={submit} noValidate className="grid gap-4">
         {formError && (
           <Alert tone={formError.tone} title={formError.title}>
@@ -106,19 +99,23 @@ export function SignIn({
           onChange={(e) => setPassword(e.target.value)}
           error={errors.password}
         />
-        <div className="flex items-center justify-between gap-3 -mt-1">
-          <label className="flex items-center gap-3 min-h-11 cursor-pointer text-sm select-none">
+        <div className="flex items-center justify-between gap-3 -mt-1 mb-1">
+          <label className="flex items-center gap-2 cursor-pointer text-sm select-none">
             <input
               type="checkbox"
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
-              className="size-5 shrink-0 rounded accent-primary cursor-pointer"
+              className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
             />
-            Remember me
+            <span className="text-slate-700 font-normal">Remember me</span>
           </label>
-          <Button type="button" variant="link" onClick={onForgot} className="text-sm">
+          <button
+            type="button"
+            onClick={onForgot}
+            className="text-sm font-medium text-[#2563eb] hover:underline cursor-pointer"
+          >
             Forgot password?
-          </Button>
+          </button>
         </div>
         <Button type="submit" fullWidth loading={loading}>
           {loading ? 'Signing in…' : 'Sign in'}
@@ -165,7 +162,7 @@ export function RecoveryConfirmation({
   identifier: string
   onBack: () => void
   onAdmin: () => void
-  onOpenLink: () => void
+  onOpenLink?: () => void
 }) {
   const [resent, setResent] = useState(false)
   return (
@@ -187,10 +184,12 @@ export function RecoveryConfirmation({
         <Button variant="link" onClick={onAdmin}>I can’t access my email</Button>
         <Button variant="link" onClick={onBack}>Back to sign in</Button>
       </div>
-      <div className="mt-6 rounded-control border border-dashed border-border-strong p-3 text-xs text-text-muted">
-        <p className="font-semibold text-text mb-1">Prototype only</p>
-        No email is sent. <button type="button" onClick={onOpenLink} className="text-primary underline underline-offset-2 cursor-pointer">Open the simulated reset link</button>.
-      </div>
+      {onOpenLink && (
+        <div className="mt-6 rounded-control border border-dashed border-border-strong p-3 text-xs text-text-muted">
+          <p className="font-semibold text-text mb-1">Prototype only</p>
+          No email is sent. <button type="button" onClick={onOpenLink} className="text-primary underline underline-offset-2 cursor-pointer">Open the simulated reset link</button>.
+        </div>
+      )}
     </>
   )
 }

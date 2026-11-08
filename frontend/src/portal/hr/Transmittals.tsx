@@ -44,28 +44,8 @@ export type TransmittalRecord = {
   included: TransmittalEmployeeSnapshot[]
 }
 
-export const initialTransmittals: TransmittalRecord[] = [
-  {
-    id: 'DEMO-TRN-001',
-    issuedAt: '2026-10-10T14:30:00+08:00',
-    issuedBy: 'Fictional HR User',
-    receivingOffice: 'Accounting Section',
-    payrollTypeId: 'permanent-staff',
-    payrollTypeName: 'Payroll for Permanent Staff Employees',
-    payrollPeriod: 'September 2026',
-    fund: 'F01',
-    included: [{
-      employeeId: 'EMP-001',
-      employeeName: 'Alex Rivera',
-      submissionId: 'DEMO-HR-HIST-001',
-      payrollTypeId: 'permanent-staff',
-      payrollTypeName: 'Payroll for Permanent Staff Employees',
-      payrollPeriod: 'September 2026',
-      fund: 'F01',
-      statusAtIssuance: 'Verified',
-    }],
-  },
-]
+export const initialTransmittals: TransmittalRecord[] = []
+
 
 const dateTime = new Intl.DateTimeFormat('en-PH', {
   year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',

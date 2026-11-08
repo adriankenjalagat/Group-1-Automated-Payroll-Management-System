@@ -10,10 +10,10 @@ type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const styles = {
   primary:
-    'bg-accent text-on-accent hover:bg-accent-hover font-semibold h-12 px-6 rounded-control shadow-[0_6px_0_-2px_rgb(15_14_46/0.25)] active:translate-y-px',
+    'bg-[#facc15] hover:bg-[#eab308] text-slate-900 font-bold h-12 px-6 rounded-xl transition-colors shadow-sm active:translate-y-px',
   secondary:
-    'bg-surface text-primary border border-border-strong hover:bg-info-soft font-medium h-12 px-6 rounded-control',
-  link: 'text-primary underline underline-offset-4 hover:text-primary-hover font-medium px-1 py-1 rounded',
+    'bg-white text-slate-900 border border-slate-300 hover:bg-slate-50 font-medium h-12 px-6 rounded-xl transition-colors',
+  link: 'text-[#2563eb] hover:underline font-medium px-1 py-1 rounded cursor-pointer',
 }
 
 export function Button({ variant = 'primary', loading, fullWidth, disabled, className, children, ...rest }: Props) {

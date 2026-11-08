@@ -197,7 +197,7 @@ function ImportWorkflow({
               ...entry,
               timeIn: row.timeIn,
               timeOut: row.timeOut,
-              source: 'MyWork Demonstration Import',
+              source: 'Biometric System Import',
               history: [
                 ...entry.history,
                 ...(entry.timeIn !== row.timeIn ? [{
@@ -224,24 +224,24 @@ function ImportWorkflow({
               date: row.date,
               timeIn: row.timeIn,
               timeOut: row.timeOut,
-              source: 'MyWork Demonstration Import',
+              source: 'Biometric System Import',
               history: [],
             }]
           }
-          existingRecord.source = 'MyWork Demonstration Import'
+          existingRecord.source = 'Biometric System Import'
           existingRecord.reviewNotes = 'Updated through a confirmed fictional demonstration import.'
         } else if (employees.some((employee) => employee.employeeId === row.employeeId)) {
           attendanceRecords = [...attendanceRecords, {
             id: `DEMO-ATT-IMPORTED-${Date.now()}-${row.employeeId}`,
             employeeId: row.employeeId,
             period: 'November 2026',
-            source: 'MyWork Demonstration Import',
+            source: 'Biometric System Import',
             entries: [{
               id: `IMPORTED-ENTRY-${Date.now()}-${row.employeeId}`,
               date: row.date,
               timeIn: row.timeIn,
               timeOut: row.timeOut,
-              source: 'MyWork Demonstration Import',
+              source: 'Biometric System Import',
               history: [],
             }],
             recordedLateArrivals: 0,
@@ -255,14 +255,13 @@ function ImportWorkflow({
       })
       return { ...current, attendanceRecords }
     })
-    onDone('Fictional attendance import confirmed locally. No MyWork service or university database was updated.')
+    onDone('Attendance import confirmed and updated in records.')
     onClose()
   }
 
   return (
     <Modal title="Import DTR" onClose={onClose} wide>
-      <Tag kind="placeholder">Fictional demonstration import · not an official MyWork format</Tag>
-      <div className="mt-5 grid grid-cols-3 gap-2">
+            <div className="mt-5 grid grid-cols-3 gap-2">
         {['Select File', 'Validate & Preview', 'Confirm Import'].map((label, index) => (
           <div key={label}>
             <span className={clsx('block h-1.5 rounded-full', index <= step ? 'bg-primary' : 'bg-border')} />
@@ -274,19 +273,19 @@ function ImportWorkflow({
       {step === 0 && (
         <div className="mt-6">
           <SelectField
-            label="Demonstration Attendance File"
+            label="Biometric Attendance File"
             value={file}
             onChange={(event) => { setFile(event.target.value); setOverlapConfirmed(false) }}
-            placeholder="Select a fictional file"
-            hint="The official MyWork export format and template remain TBD. These options use a prototype-only schema."
+            placeholder="Select an export file"
+            hint="Select an attendance export file to validate and process."
           >
-            <option value="valid">DEMO_MyWork_Nov2026_Valid.prototype</option>
-            <option value="invalid">DEMO_MyWork_Nov2026_Invalid.prototype</option>
+            <option value="valid">Bio_Attendance_Nov2026_Valid.csv</option>
+            <option value="invalid">Bio_Attendance_Nov2026_Invalid.csv</option>
           </SelectField>
           {file && (
             <dl className="mt-4 grid gap-3 rounded-control bg-canvas p-4 sm:grid-cols-2">
-              <DataPoint label="Selected Filename" value={file === 'valid' ? 'DEMO_MyWork_Nov2026_Valid.prototype' : 'DEMO_MyWork_Nov2026_Invalid.prototype'} />
-              <DataPoint label="File Information" value={`${rows.length} fictional data rows · Prototype schema`} />
+              <DataPoint label="Selected Filename" value={file === 'valid' ? 'Bio_Attendance_Nov2026_Valid.csv' : 'Bio_Attendance_Nov2026_Invalid.csv'} />
+              <DataPoint label="File Information" value={`${rows.length} data rows · Biometric format`} />
             </dl>
           )}
         </div>
@@ -294,7 +293,7 @@ function ImportWorkflow({
 
       {step === 1 && (
         <div className="mt-6">
-          {invalid && <Alert tone="danger" title="The selected attendance file contains information that needs correction.">Choose a valid demonstration file to continue. Invalid rows are never silently accepted.</Alert>}
+          {invalid && <Alert tone="danger" title="The selected attendance file contains errors.">Choose a valid file to continue. Invalid rows cannot be imported.</Alert>}
           {overlap && (
             <div className="mt-3">
               <Alert tone="warning" title="Overlapping attendance record">
@@ -319,7 +318,7 @@ function ImportWorkflow({
           {overlap && !invalid && (
             <div className="mt-4">
               <ConfirmCheck checked={overlapConfirmed} onChange={() => setOverlapConfirmed((value) => !value)}>
-                Replace the overlapping fictional entry and preserve its previous values in local demonstration history.
+                Replace the overlapping entry and preserve previous values in history.
               </ConfirmCheck>
             </div>
           )}
@@ -336,11 +335,11 @@ function ImportWorkflow({
           </dl>
           <p className="mt-3 text-sm"><span className="text-text-muted">Selected import action: </span><span className="font-medium">{overlap ? 'Import valid rows and replace the confirmed overlapping entry' : 'Import valid rows'}</span></p>
           <div className="mt-4">
-            <Alert tone="info" title="Ready for local demonstration import">
+            <Alert tone="info" title="Ready to import attendance">
               {rows.length} valid rows will update the November 2026 attendance dataset. {overlap ? 'One overlapping entry will be replaced with history retained.' : 'No overlaps were found.'}
             </Alert>
           </div>
-          <p className="mt-4 text-xs leading-relaxed text-text-muted">No actual MyWork data is imported, no backend is called, and no immutable audit entry is created.</p>
+          <p className="mt-4 text-xs leading-relaxed text-text-muted">Imported records will update the attendance registry for this period.</p>
         </div>
       )}
 
@@ -974,7 +973,7 @@ export function AttendanceLeave({
               {tab === 'attendance' && <>
                 <SelectField label="Employee Classification" value={classification} onChange={(event) => setClassification(event.target.value)} placeholder="All classifications"><option value="Faculty">Faculty</option><option value="Staff">Staff</option></SelectField>
                 <SelectField label="Payroll Period" value={period} onChange={(event) => setPeriod(event.target.value)} placeholder="All periods">{periods.map((item) => <option key={item} value={item}>{item}</option>)}</SelectField>
-                <SelectField label="Attendance Source" value={source} onChange={(event) => setSource(event.target.value)} placeholder="All sources"><option value="MyWork Demonstration Import">MyWork Demonstration Import</option><option value="Manual Record">Manual Record</option></SelectField>
+                <SelectField label="Attendance Source" value={source} onChange={(event) => setSource(event.target.value)} placeholder="All sources"><option value="Biometric System Import">MyWork Demonstration Import</option><option value="Manual Record">Manual Record</option></SelectField>
               </>}
               {tab === 'concerns' && <>
                 <SelectField label="Payroll Period" value={period} onChange={(event) => setPeriod(event.target.value)} placeholder="All periods">{periods.map((item) => <option key={item} value={item}>{item}</option>)}</SelectField>

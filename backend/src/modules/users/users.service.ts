@@ -5,6 +5,7 @@ export interface UserAccount {
   name: string
   email: string
   username: string
+  password?: string
   office: string
   roles: UserRole[]
   status: 'active' | 'locked' | 'pending'
@@ -13,6 +14,15 @@ export interface UserAccount {
 export const DEMO_PASSWORD = process.env.DEMO_PASSWORD || 'Payroll#2026'
 
 const users: UserAccount[] = [
+  {
+    name: 'Angel Queen Catian',
+    email: 'angelqueen.catian@msunaawan.edu.ph',
+    username: 'angelqueen.catian',
+    password: 'AN1021176an',
+    office: 'College of Business and Information Technology',
+    roles: ['Employee'],
+    status: 'active',
+  },
   {
     name: 'Maria Santos',
     email: 'maria.santos@msunaawan.example',
@@ -121,7 +131,10 @@ export const usersService = {
   findByIdentifier(identifier: string): UserAccount | undefined {
     const id = identifier.trim().toLowerCase()
     return users.find(
-      (u) => u.email.toLowerCase() === id || u.username.toLowerCase() === id,
+      (u) =>
+        u.email.toLowerCase() === id ||
+        u.username.toLowerCase() === id ||
+        u.email.toLowerCase().split('@')[0] === id,
     )
   },
 }

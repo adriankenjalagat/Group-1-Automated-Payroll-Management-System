@@ -33,70 +33,8 @@ export type PayslipRecord = {
 
 const TYPE = "Payroll for Permanent Staff Employees"
 
-export const payslipRecords: PayslipRecord[] = [
-  // Released only after the matching attendance submission was verified (submitted in the following month).
-  {
-    id: "DEMO-PAYROLL-2026-08",
-    employeeId: "EMP-005",
-    payrollType: TYPE,
-    period: "August 2026",
-    periodKey: "2026-08",
-    payBasis: "Monthly",
-    releaseStatus: "Released",
-    releaseDate: "2026-09-18",
-    earnings: [
-      { name: "Sample Basic Pay", amount: 20000 },
-      { name: "Sample Earning Item", amount: 1000 },
-    ],
-    grossPay: 21000,
-    deductions: [
-      { name: "Sample Deduction A", amount: 1500 },
-      { name: "Sample Deduction B", amount: 800 },
-    ],
-    netPay: 18700,
-  },
-  {
-    id: "DEMO-PAYROLL-2026-07",
-    employeeId: "EMP-005",
-    payrollType: TYPE,
-    period: "July 2026",
-    periodKey: "2026-07",
-    payBasis: "Monthly",
-    releaseStatus: "Released",
-    releaseDate: "2026-08-19",
-    earnings: [{ name: "Sample Basic Pay", amount: 20000 }],
-    grossPay: 20000,
-    deductions: [
-      { name: "Sample Deduction A", amount: 1500 },
-      { name: "Sample Deduction B", amount: 800 },
-    ],
-    netPay: 17700,
-  },
-  {
-    id: "DEMO-PAYROLL-2026-06",
-    employeeId: "EMP-005",
-    payrollType: TYPE,
-    period: "June 2026",
-    periodKey: "2026-06",
-    payBasis: "Monthly",
-    releaseStatus: "Released",
-    releaseDate: "2026-07-20",
-    earnings: [{ name: "Sample Basic Pay", amount: 20000 }],
-    grossPay: 20000,
-    deductions: [{ name: "Sample Deduction A", amount: 1500 }],
-    netPay: 18500,
-  },
-  // Not yet Released: no itemized figures are present, so nothing can be displayed or printed.
-  {
-    id: "DEMO-PAYROLL-2026-09",
-    employeeId: "EMP-005",
-    payrollType: TYPE,
-    period: "September 2026",
-    periodKey: "2026-09",
-    payBasis: "Monthly",
-    releaseStatus: "Under Review",
-  },
-]
+export const payslipRecords: PayslipRecord[] = []
+
 
 const peso = new Intl.NumberFormat("en-PH", {
   style: "currency",

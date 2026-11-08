@@ -14,12 +14,12 @@ export function TextField({ label, hint, error, icon, className, ...rest }: Fiel
   const describedBy = [hint && `${id}-hint`, error && `${id}-err`].filter(Boolean).join(' ') || undefined
   return (
     <div className={className}>
-      <label htmlFor={id} className="block text-sm font-medium text-text mb-1.5">
+      <label htmlFor={id} className="block text-sm font-semibold text-slate-900 mb-1.5">
         {label}
       </label>
       <div className="relative">
         {icon && (
-          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none">
+          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none flex items-center justify-center">
             <Icon name={icon} size={18} />
           </span>
         )}
@@ -29,14 +29,16 @@ export function TextField({ label, hint, error, icon, className, ...rest }: Fiel
           aria-describedby={describedBy}
           {...rest}
           className={clsx(
-            'w-full h-12 rounded-control bg-surface border text-base sm:text-sm text-text placeholder:text-text-muted/70 px-3.5',
+            'w-full h-12 rounded-xl bg-white border text-sm text-slate-900 placeholder:text-slate-400 px-3.5 outline-none transition-colors',
             icon && 'pl-11',
-            error ? 'border-danger' : 'border-border-strong hover:border-primary',
+            error
+              ? 'border-danger focus:border-danger focus:ring-2 focus:ring-danger/20'
+              : 'border-slate-300 hover:border-slate-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20',
           )}
         />
       </div>
       {hint && !error && (
-        <p id={`${id}-hint`} className="mt-1.5 text-xs text-text-muted">
+        <p id={`${id}-hint`} className="mt-1.5 text-xs text-slate-500">
           {hint}
         </p>
       )}
@@ -49,20 +51,65 @@ export function TextField({ label, hint, error, icon, className, ...rest }: Fiel
   )
 }
 
-export function PasswordField(props: Omit<FieldProps, 'type' | 'icon'>) {
+export function PasswordField({
+  label,
+  hint,
+  error,
+  className,
+  ...inputProps
+}: Omit<FieldProps, 'type' | 'icon'>) {
   const [show, setShow] = useState(false)
+  const id = useId()
+  const describedBy = [hint && `${id}-hint`, error && `${id}-err`].filter(Boolean).join(' ') || undefined
+
   return (
-    <div className="relative">
-      <TextField placeholder="••••••••••" {...props} icon="lock" type={show ? 'text' : 'password'} className={clsx(props.className)} />
-      <button
-        type="button"
-        onClick={() => setShow((s) => !s)}
-        aria-pressed={show}
-        aria-label={show ? 'Hide password' : 'Show password'}
-        className="absolute right-2 top-[2.0625rem] size-9 grid place-items-center rounded-lg text-text-muted hover:text-primary cursor-pointer"
-      >
-        <Icon name={show ? 'eyeOff' : 'eye'} size={18} />
-      </button>
+    <div className={className}>
+      <label htmlFor={id} className="block text-sm font-semibold text-slate-900 mb-1.5">
+        {label}
+      </label>
+      <div className="relative flex items-center">
+        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none flex items-center justify-center z-10">
+          <Icon name="lock" size={18} />
+        </span>
+        <input
+          id={id}
+          placeholder="••••••••••"
+          {...inputProps}
+          type={show ? 'text' : 'password'}
+          aria-invalid={!!error || undefined}
+          aria-describedby={describedBy}
+          className={clsx(
+            'w-full h-12 rounded-xl bg-white border text-sm text-slate-900 placeholder:text-slate-400 pl-11 pr-11 outline-none transition-colors',
+            error
+              ? 'border-danger focus:border-danger focus:ring-2 focus:ring-danger/20'
+              : 'border-slate-300 hover:border-slate-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20',
+          )}
+        />
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setShow((prev) => !prev)
+          }}
+          tabIndex={-1}
+          aria-pressed={show}
+          aria-label={show ? 'Hide password' : 'Show password'}
+          className="absolute right-2 top-1/2 -translate-y-1/2 size-9 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer transition-colors z-20 focus:outline-none"
+        >
+          <Icon name={show ? 'eyeOff' : 'eye'} size={18} />
+        </button>
+      </div>
+      {hint && !error && (
+        <p id={`${id}-hint`} className="mt-1.5 text-xs text-slate-500">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={`${id}-err`} className="mt-1.5 text-xs text-danger font-medium flex items-center gap-1.5">
+          <Icon name="alert" size={14} /> {error}
+        </p>
+      )}
     </div>
   )
 }

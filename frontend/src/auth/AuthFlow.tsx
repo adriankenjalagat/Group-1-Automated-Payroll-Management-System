@@ -14,44 +14,66 @@ import {
   Success,
 } from "./AccountViews"
 import { DashboardHandoff, WorkspaceSelector } from "./HandoffViews"
-import { DEMO_PASSWORD, users, type MockUser, type Role } from "./mockData"
-import { Button } from "../MsuPayroll"
+import type { MockUser, Role } from "./mockData"
 import { AdminPortal } from "../admin/AdminPortal"
 import { RolePortal } from "../portal/RolePortal"
 import type { PortalRole } from "../portal/roles"
 
-type View = "signIn" | "forgot" | "recoverySent" | "adminRecovery" | "activate" | "activationUnavailable" | "activationInvalid" | "activationSuccess" | "setPassword" | "resetUnavailable" | "resetSuccess" | "workspace" | "dashboard" | "adminPortal" | "rolePortal"
+type View =
+  | "signIn"
+  | "forgot"
+  | "recoverySent"
+  | "adminRecovery"
+  | "activate"
+  | "activationUnavailable"
+  | "activationInvalid"
+  | "activationSuccess"
+  | "setPassword"
+  | "resetUnavailable"
+  | "resetSuccess"
+  | "workspace"
+  | "dashboard"
+  | "adminPortal"
+  | "rolePortal"
 
-const jumps: {
-  view: View
-  label: string
-}[] = [
-  { view: "signIn", label: "1 · Sign in" },
-  { view: "forgot", label: "2 · Forgot password" },
-  { view: "recoverySent", label: "3 · Recovery confirmation" },
-  { view: "adminRecovery", label: "4 · Admin-assisted recovery" },
-  { view: "activate", label: "5 · Activate account" },
-  { view: "activationUnavailable", label: "6 · Invitation expired" },
-  { view: "activationInvalid", label: "6b · Activation link not valid" },
-  { view: "activationSuccess", label: "7 · Activation success" },
-  { view: "setPassword", label: "8 · Set new password" },
-  { view: "resetUnavailable", label: "9 · Reset link unavailable" },
-  { view: "resetSuccess", label: "10 · Password reset success" },
-  { view: "adminPortal", label: "11 · Administrator portal" },
-  { view: "rolePortal", label: "12 · Role portals (demo switcher)" },
-]
+function getInitialAuth(): { user: MockUser | null; view: View; role: Role } {
+  try {
+    const raw = localStorage.getItem("msu_user")
+    if (raw) {
+      const parsed = JSON.parse(raw) as MockUser
+      if (parsed && parsed.roles && parsed.roles.length > 0) {
+        const primaryRole = parsed.roles[0]
+        return {
+          user: parsed,
+          role: primaryRole,
+          view: primaryRole === "System Administrator" ? "adminPortal" : "rolePortal",
+        }
+      }
+    }
+  } catch {
+    // Ignore JSON parse errors
+  }
+  return { user: null, role: "Employee", view: "signIn" }
+}
 
 export function AuthFlow() {
-  const [view, setView] = useState<View>("signIn")
+  const [initial] = useState(getInitialAuth)
+  const [view, setView] = useState<View>(initial.view)
   const [identifier, setIdentifier] = useState("")
-  const [user, setUser] = useState<MockUser>(users[0])
-  const [role, setRole] = useState<Role>("Employee")
+  const [user, setUser] = useState<MockUser | null>(initial.user)
+  const [role, setRole] = useState<Role>(initial.role)
 
   useEffect(() => {
     document.getElementById("view-title")?.focus()
   }, [view])
 
-  const signOut = () => setView("signIn")
+  const signOut = () => {
+    localStorage.removeItem("msu_user")
+    localStorage.removeItem("msu_token")
+    setUser(null)
+    setView("signIn")
+  }
+
   const toSignIn = () => setView("signIn")
 
   function signedIn(u: MockUser) {
@@ -63,18 +85,11 @@ export function AuthFlow() {
     )
   }
 
-  if (view === "adminPortal") {
-    const admin =
-      users.find((x) => x.roles.includes("System Administrator")) ?? user
-    return (
-      <AdminPortal
-        user={user.roles.includes("System Administrator") ? user : admin}
-        onSignOut={signOut}
-      />
-    )
+  if (view === "adminPortal" && user) {
+    return <AdminPortal user={user} onSignOut={signOut} />
   }
 
-  if (view === "rolePortal") {
+  if (view === "rolePortal" && user) {
     const start = (
       role === "System Administrator" ? "Employee" : role
     ) as PortalRole
@@ -83,10 +98,6 @@ export function AuthFlow() {
         user={user}
         initialRole={start}
         onSignOut={signOut}
-        onSwitchDemo={(nextUser, nextRole) => {
-          setUser(nextUser)
-          setRole(nextRole)
-        }}
       />
     )
   }
@@ -111,38 +122,42 @@ export function AuthFlow() {
             identifier={identifier}
             onBack={toSignIn}
             onAdmin={() => setView("adminRecovery")}
-            onOpenLink={() => setView("setPassword")}
           />
         )}
         {view === "adminRecovery" && (
           <AdminAssistedRecovery onBack={toSignIn} />
         )}
         {view === "activate" && (
-          <ActivateAccount onDone={() => setView("activationSuccess")} />
-        )}
-        {view === "activationInvalid" && (
-          <ActivationUnavailable
-            kind="invalid"
-            onAdmin={() => setView("adminRecovery")}
-            onBack={toSignIn}
+          <ActivateAccount
+            onDone={() => setView("setPassword")}
           />
         )}
         {view === "activationUnavailable" && (
           <ActivationUnavailable
-            onAdmin={() => setView("adminRecovery")}
+            kind="expired"
             onBack={toSignIn}
+            onAdmin={() => setView("adminRecovery")}
+          />
+        )}
+        {view === "activationInvalid" && (
+          <ActivationUnavailable
+            kind="invalid"
+            onBack={toSignIn}
+            onAdmin={() => setView("adminRecovery")}
           />
         )}
         {view === "activationSuccess" && (
           <Success
             title="Account activated"
-            text="Your password is set. Sign in to continue to your workspace."
+            text="Your university account has been created and verified. Sign in to access your payroll portal."
             cta="Continue to sign in"
             onNext={toSignIn}
           />
         )}
         {view === "setPassword" && (
-          <SetNewPassword onDone={() => setView("resetSuccess")} />
+          <SetNewPassword
+            onDone={() => setView("activationSuccess")}
+          />
         )}
         {view === "resetUnavailable" && (
           <ResetUnavailable
@@ -158,7 +173,7 @@ export function AuthFlow() {
             onNext={toSignIn}
           />
         )}
-        {view === "workspace" && (
+        {view === "workspace" && user && (
           <WorkspaceSelector
             user={user}
             onSignOut={signOut}
@@ -170,7 +185,7 @@ export function AuthFlow() {
             }}
           />
         )}
-        {view === "dashboard" && (
+        {view === "dashboard" && user && (
           <DashboardHandoff
             user={user}
             role={role}
@@ -181,65 +196,6 @@ export function AuthFlow() {
           />
         )}
       </div>
-      <PrototypePanel onJump={setView} />
     </AuthShell>
-  )
-}
-
-function PrototypePanel({ onJump }: { onJump: (v: View) => void }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="fixed z-50 text-sm flex flex-col-reverse items-start left-[max(1rem,env(safe-area-inset-left))] bottom-[max(1rem,env(safe-area-inset-bottom))] lg:flex-col lg:items-end lg:left-auto lg:bottom-auto lg:top-4 lg:right-4">
-      {open && (
-        <div className="order-2 my-3 w-80 max-w-[calc(100vw-2rem)] max-h-[60vh] overflow-auto rounded-card bg-deep text-on-primary p-5 shadow-card on-dark">
-          <p className="font-semibold mb-1">Prototype controls</p>
-          <p className="text-xs text-on-primary-muted mb-3">
-            Fictional accounts. Password for all:{" "}
-            <code className="text-accent">{DEMO_PASSWORD}</code>
-          </p>
-          <ul className="grid gap-1.5 mb-4 text-xs">
-            {users.map((u) => (
-              <li key={u.username} className="flex justify-between gap-2">
-                <code className="text-accent">{u.username}</code>
-                <span className="text-on-primary-muted text-right">
-                  {u.status === "active"
-                    ? u.roles.join(" + ")
-                    : u.status === "locked"
-                      ? "locked account"
-                      : "pending activation"}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="text-xs text-on-primary-muted mb-2">Jump to a view</p>
-          <div className="grid gap-1">
-            {jumps.map((j) => (
-              <button
-                key={j.view}
-                type="button"
-                onClick={() => {
-                  onJump(j.view)
-                  setOpen(false)
-                }}
-                className="text-left rounded-lg px-2.5 py-1.5 hover:bg-primary cursor-pointer"
-              >
-                {j.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-      <div className="order-1 flex justify-end">
-        <Button
-          type="button"
-          variant="secondary"
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-          className="h-9 lg:h-10 px-4 shadow-card"
-        >
-          Prototype
-        </Button>
-      </div>
-    </div>
   )
 }

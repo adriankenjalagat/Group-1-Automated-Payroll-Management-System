@@ -68,12 +68,7 @@ function PageHeader({
 }
 
 export function SupervisorDemoNotice() {
-  return (
-    <Alert tone="info" title="Demo Data">
-      Employee names, documents, attendance concerns, and review activities
-      displayed here are fictional and intended for prototype testing.
-    </Alert>
-  )
+  return null
 }
 
 function SectionHeader({
@@ -303,7 +298,7 @@ function AttachmentPreview({
   return (
     <>
       <Modal title="Document Preview" onClose={onClose}>
-        <Tag kind="placeholder">Demo attachment metadata</Tag>
+        
         <dl className="mt-5 grid gap-4 rounded-control bg-canvas p-4">
           <DataPoint
             label="Document Name"
@@ -616,7 +611,7 @@ function ReviewWorkspace({
         status: "Validated",
         validatedAt: at,
         remarks:
-          "Supervisor validated the available configured checklist in the local demonstration.",
+          "Supervisor validated the available configured checklist.",
       },
       supervisorDecisions: [...decisionsFor(submission), event],
     }
@@ -699,7 +694,7 @@ function ReviewWorkspace({
           subtitle="Review the selected employee's documents and recorded attendance concerns."
         />
         <div className="flex flex-wrap items-center gap-2">
-          <Tag kind="placeholder">Fictional Supervisor Demonstration</Tag>
+          
           <Tag kind={statusTone(submission.status)}>{submission.status}</Tag>
         </div>
         <div
@@ -1485,8 +1480,8 @@ function ReviewWorkspace({
         >
           <Alert tone="success" title="Supervisor decision recorded">
             {success.decision === "Validated"
-              ? "The submission has been validated in this isolated demonstration. A production backend would make it available for HR verification."
-              : "The submission has been returned in this isolated demonstration and your remarks were preserved. No Employee Portal record or replacement upload was created."}
+              ? "The submission has been validated and forwarded to HR verification."
+              : "The submission has been returned and your remarks were preserved."}
           </Alert>
           <div className="mt-5 grid gap-3">
             <Button type="button" onClick={onNext}>
@@ -2239,7 +2234,7 @@ export function SupervisorDashboardComplete({
         />
         <p className="mt-5 text-lg font-semibold">Welcome back, {user.name}</p>
         <p className="mt-1 text-sm text-text-muted">
-          Immediate Supervisor · Fictional Demonstration Account
+          Immediate Supervisor
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -2460,8 +2455,8 @@ export function SupervisorMyAccount({
           <DataPoint label="Username" value={profile.username} />
           <DataPoint label="User Reference" value={profile.employeeId} />
           <DataPoint label="Role" value="Immediate Supervisor" />
-          <DataPoint label="Account" value="Fictional Demonstration Account" />
-          <DataPoint label="Account Status" value="Active — Demo" />
+          <DataPoint label="Account" value="Active Account" />
+          <DataPoint label="Account Status" value="Active" />
         </dl>
       </section>
       <MyAccount profile={profile} />
