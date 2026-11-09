@@ -4,17 +4,18 @@ import { Icon, type IconName } from './Icons'
 
 type FieldProps = InputHTMLAttributes<HTMLInputElement> & {
   label: string
+  labelClassName?: string
   hint?: string
   error?: string
   icon?: IconName
 }
 
-export function TextField({ label, hint, error, icon, className, ...rest }: FieldProps) {
+export function TextField({ label, labelClassName, hint, error, icon, className, ...rest }: FieldProps) {
   const id = useId()
   const describedBy = [hint && `${id}-hint`, error && `${id}-err`].filter(Boolean).join(' ') || undefined
   return (
     <div className={className}>
-      <label htmlFor={id} className="block text-sm font-semibold text-slate-900 mb-1.5">
+      <label htmlFor={id} className={clsx("block text-sm font-medium text-text mb-1.5", labelClassName)}>
         {label}
       </label>
       <div className="relative">
@@ -53,6 +54,7 @@ export function TextField({ label, hint, error, icon, className, ...rest }: Fiel
 
 export function PasswordField({
   label,
+  labelClassName,
   hint,
   error,
   className,
@@ -64,7 +66,7 @@ export function PasswordField({
 
   return (
     <div className={className}>
-      <label htmlFor={id} className="block text-sm font-semibold text-slate-900 mb-1.5">
+      <label htmlFor={id} className={clsx("block text-sm font-medium text-text mb-1.5", labelClassName)}>
         {label}
       </label>
       <div className="relative flex items-center">

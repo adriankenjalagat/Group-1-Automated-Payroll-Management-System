@@ -138,8 +138,13 @@ export const users: MockUser[] = [
 ]
 
 export function findUser(identifier: string) {
-  const id = identifier.trim().toLowerCase()
-  return users.find((u) => u.email === id || u.username === id)
+  const id = identifier.trim().toLowerCase().replace(/^@/, '')
+  return users.find(
+    (u) =>
+      u.email.toLowerCase() === id ||
+      u.username.toLowerCase() === id ||
+      u.email.toLowerCase().split('@')[0] === id,
+  )
 }
 
 export function initials(name: string) {

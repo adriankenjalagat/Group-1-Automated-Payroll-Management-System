@@ -1,0 +1,304 @@
+{
+  "info": {
+    "_postman_id": "msu-naawan-payroll-api-collection",
+    "name": "MSU-Naawan Payroll Management API",
+    "description": "Postman API Collection for MSU-Naawan Automated Payroll Management System",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "0. System Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": ["{{baseUrl}}"],
+          "path": [""]
+        }
+      }
+    },
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "Login (Username as Password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.token) {",
+                  "    pm.collectionVariables.set('authToken', json.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"eyrol.junio\",\n  \"password\": \"eyrol.junio\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Login (Admin rbautista)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"rbautista\",\n  \"password\": \"rbautista\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Users",
+      "item": [
+        {
+          "name": "Get All Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users"]
+            }
+          }
+        },
+        {
+          "name": "Create New User (Auto Username/Password)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Juan Dela Cruz\",\n  \"username\": \"juan.delacruz\",\n  \"role\": \"Employee\",\n  \"email\": \"juan.delacruz@msunaawan.example\",\n  \"password\": \"juan.delacruz\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Payroll",
+      "item": [
+        {
+          "name": "Get All Payrolls",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payroll",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payroll"]
+            }
+          }
+        },
+        {
+          "name": "Get Payroll By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payroll/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payroll", "1"]
+            }
+          }
+        },
+        {
+          "name": "Create Payroll Entry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeeName\": \"Juan Dela Cruz\",\n  \"department\": \"College of Business and Information Technology\",\n  \"period\": \"November 2026\",\n  \"grossPay\": 31320,\n  \"deductions\": 2820\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/payroll",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payroll"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Employees & Records",
+      "item": [
+        {
+          "name": "Get Employees",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/employees",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "employees"]
+            }
+          }
+        },
+        {
+          "name": "Get Attendance",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/attendance",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "attendance"]
+            }
+          }
+        },
+        {
+          "name": "Get Attachments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/attachments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "attachments"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Approvals, Disbursements & Payslips",
+      "item": [
+        {
+          "name": "Get Approvals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/approvals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "approvals"]
+            }
+          }
+        },
+        {
+          "name": "Get Disbursements",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/disbursement",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "disbursement"]
+            }
+          }
+        },
+        {
+          "name": "Get Payslips",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payslips",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payslips"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Audit Logs",
+      "item": [
+        {
+          "name": "Get All Audit Logs (PostgreSQL)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/audit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "audit"]
+            }
+          }
+        },
+        {
+          "name": "Create Audit Log Entry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": 1,\n  \"action\": \"Admin reviewed payroll compliance records\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/audit",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "audit"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
+

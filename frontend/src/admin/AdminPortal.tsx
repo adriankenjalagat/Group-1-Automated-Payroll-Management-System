@@ -1,12 +1,12 @@
 import clsx from 'clsx'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { apiClient } from '../api/client'
 import logo from '../assets/logo.png'
 import { Icon, type IconName } from '../MsuPayroll'
 import type { MockUser } from '../auth/mockData'
 import { Dashboard } from './Dashboard'
 import {
   UserManagement,
-  initialDirectory,
   type DirectoryUser,
   type UserPreset,
 } from './UserManagement'
@@ -188,12 +188,43 @@ export function AdminPortal({ user, onSignOut }: { user: MockUser; onSignOut: ()
   const [page, setPage] = useState<Page>('dashboard')
   const [drawer, setDrawer] = useState(() => window.innerWidth >= 1024)
   const [users, setUsers] = useState<AdminUser[]>(seedUsers)
-  const [directoryUsers, setDirectoryUsers] = useState<DirectoryUser[]>(initialDirectory)
+  const [directoryUsers, setDirectoryUsers] = useState<DirectoryUser[]>([])
   const [activity, setActivity] = useState<Activity[]>(seedActivity)
   const [preset, setPreset] = useState<UserPreset>({})
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const first = useRef(true)
   const toastId = useRef(0)
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      const data = await apiClient.get<any[]>('/users')
+      if (Array.isArray(data)) {
+        const mapped: DirectoryUser[] = data.map((u, idx) => {
+          let roleName = (u.roles && u.roles[0]) || u.role || 'Employee'
+          if (roleName === 'System Administrator') roleName = 'Administrator'
+          return {
+            userId: u.accountId || `USR-${idx + 1}`,
+            name: u.name || u.username,
+            username: u.username,
+            role: roleName,
+            status: (u.status && u.status.toLowerCase() === 'active') ? 'Active' : 'Deactivated',
+            employeeId: u.employeeId
+              ? (String(u.employeeId).startsWith('EMP-')
+                  ? u.employeeId
+                  : `EMP-${String(u.employeeId).padStart(3, '0')}`)
+              : null,
+          }
+        })
+        setDirectoryUsers(mapped)
+      }
+    } catch (err) {
+      console.warn('Failed to fetch users from database:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchUsers()
+  }, [fetchUsers])
 
   useEffect(() => {
     if (first.current) { first.current = false; return }
@@ -265,6 +296,7 @@ export function AdminPortal({ user, onSignOut }: { user: MockUser; onSignOut: ()
                   setDirectory={setDirectoryUsers}
                   record={record}
                   preset={preset}
+                  onRefresh={fetchUsers}
                 />
               )}
               {page === 'payroll' && (

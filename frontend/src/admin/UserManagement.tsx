@@ -1,5 +1,6 @@
 import clsx from 'clsx'
 import { useMemo, useState, type FormEvent } from 'react'
+import { apiClient } from '../api/client'
 import { Alert, Button, Icon, TextField } from '../MsuPayroll'
 import type { Role } from '../auth/mockData'
 import type { AccountStatus } from './data'
@@ -127,8 +128,19 @@ const presetRole = (role?: Role): SystemRole | '' => {
   return role
 }
 
-function linkedRecord(user: DirectoryUser) {
-  return employeeRecords.find((record) => record.employeeId === user.employeeId)
+function linkedRecord(user: DirectoryUser): EmployeeRecord | undefined {
+  if (!user.employeeId) return undefined
+  const match = employeeRecords.find((record) => record.employeeId === user.employeeId)
+  if (match) return match
+
+  return {
+    employeeId: user.employeeId,
+    name: user.name,
+    classification: (user.role === 'Employee' ? 'Staff' : 'Staff') as Classification,
+    employmentType: 'Permanent',
+    payrollType: 'Permanent Staff',
+    office: 'University Office',
+  }
 }
 
 function StatusBadge({ status }: { status: DirectoryStatus }) {
@@ -220,7 +232,14 @@ function UserDetails({ user, onClose }: { user: DirectoryUser; onClose: () => vo
   )
 }
 
-type Draft = { name: string; username: string; role: SystemRole | ''; employeeId: string }
+type Draft = {
+  firstName: string
+  lastName: string
+  name: string
+  username: string
+  role: SystemRole | ''
+  employeeId: string
+}
 type EditorMode = { kind: 'add' } | { kind: 'edit'; userId: string }
 
 function UserEditor({
@@ -235,15 +254,54 @@ function UserEditor({
   onSave: (draft: Draft) => void
 }) {
   const existing = mode.kind === 'edit' ? directory.find((user) => user.userId === mode.userId) : undefined
+  const existingParts = (existing?.name ?? '').trim().split(/\s+/)
+  const initialFirst = existingParts.length > 1 ? existingParts.slice(0, -1).join(' ') : existingParts[0] || ''
+  const initialLast = existingParts.length > 1 ? existingParts.slice(-1)[0] : ''
+
   const [draft, setDraft] = useState<Draft>({
+    firstName: initialFirst,
+    lastName: initialLast,
     name: existing?.name ?? '',
     username: existing?.username ?? '',
     role: existing?.role ?? '',
     employeeId: existing?.employeeId ?? '',
   })
+  const [usernameManuallyEdited, setUsernameManuallyEdited] = useState(mode.kind === 'edit')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [confirmRole, setConfirmRole] = useState(false)
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((current) => ({ ...current, [key]: value }))
+  
+  const toUsername = (first: string, last: string) => {
+    const f = first.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    const l = last.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (f && l) return `${f}.${l}`
+    if (f) return f
+    if (l) return l
+    return ''
+  }
+
+  const handleFirstChange = (val: string) => {
+    setDraft((cur) => {
+      const full = [val.trim(), cur.lastName.trim()].filter(Boolean).join(' ')
+      const nextUsername = !usernameManuallyEdited ? toUsername(val, cur.lastName) : cur.username
+      return { ...cur, firstName: val, name: full, username: nextUsername }
+    })
+  }
+
+  const handleLastChange = (val: string) => {
+    setDraft((cur) => {
+      const full = [cur.firstName.trim(), val.trim()].filter(Boolean).join(' ')
+      const nextUsername = !usernameManuallyEdited ? toUsername(cur.firstName, val) : cur.username
+      return { ...cur, lastName: val, name: full, username: nextUsername }
+    })
+  }
+
+  const handleUsernameChange = (val: string) => {
+    setUsernameManuallyEdited(true)
+    const cleaned = val.replace(/^@/, '').toLowerCase()
+    set('username', cleaned)
+  }
+
   const requiresEmployeeLink = draft.role === 'Employee'
   const linked = employeeRecords.find((record) => record.employeeId === draft.employeeId)
   const availableRecords = employeeRecords.filter((record) =>
@@ -253,11 +311,13 @@ function UserEditor({
 
   const validate = () => {
     const next: Record<string, string> = {}
-    if (!draft.name.trim()) next.name = 'Enter a full name.'
-    if (!draft.username.trim()) next.username = 'Enter a username.'
+    const cleanUser = draft.username.replace(/^@/, '').trim().toLowerCase()
+    if (!draft.firstName.trim()) next.firstName = 'Enter first name.'
+    if (!draft.lastName.trim()) next.lastName = 'Enter last name.'
+    if (!cleanUser) next.username = 'Enter a username.'
     else if (directory.some((user) =>
       user.userId !== existing?.userId &&
-      user.username.toLowerCase() === draft.username.trim().toLowerCase(),
+      user.username.toLowerCase() === cleanUser,
     )) next.username = 'This username is already used by another demonstration account.'
     if (!draft.role) next.role = 'Select a system role.'
     if (requiresEmployeeLink && !draft.employeeId) next.employeeId = 'Link an existing HR employee record for this Employee account.'
@@ -272,7 +332,13 @@ function UserEditor({
       setConfirmRole(true)
       return
     }
-    onSave(draft)
+    const cleanUser = draft.username.replace(/^@/, '').trim().toLowerCase()
+    const finalDraft = {
+      ...draft,
+      username: cleanUser,
+      name: draft.name.trim() || `${draft.firstName.trim()} ${draft.lastName.trim()}`,
+    }
+    onSave(finalDraft)
   }
 
   return (
@@ -298,20 +364,34 @@ function UserEditor({
               ? 'Create a system account and assign an access role.'
               : 'Update account fields without changing HR-maintained employee information.'}
           </p>
-          <TextField
-            label="Full Name"
-            value={draft.name}
-            onChange={(event) => set('name', event.target.value)}
-            error={errors.name}
-            autoComplete="off"
-          />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <TextField
+              label="First Name"
+              value={draft.firstName}
+              onChange={(event) => handleFirstChange(event.target.value)}
+              error={errors.firstName}
+              autoComplete="off"
+              placeholder="e.g. Ramon"
+            />
+            <TextField
+              label="Last Name"
+              value={draft.lastName}
+              onChange={(event) => handleLastChange(event.target.value)}
+              error={errors.lastName}
+              autoComplete="off"
+              placeholder="e.g. Bautista"
+            />
+          </div>
           <TextField
             label="Username"
+            icon="user"
             value={draft.username}
-            onChange={(event) => set('username', event.target.value)}
+            onChange={(event) => handleUsernameChange(event.target.value)}
             error={errors.username}
             autoComplete="off"
             autoCapitalize="none"
+            placeholder="e.g. firstname.lastname"
+            hint={mode.kind === 'add' && !usernameManuallyEdited ? 'Automatically generated from First Name and Last Name' : undefined}
           />
           <SelectField
             label="System Role"
@@ -419,12 +499,14 @@ export function UserManagement({
   setDirectory,
   record,
   preset,
+  onRefresh,
 }: {
   me: string
   directory: DirectoryUser[]
   setDirectory: (update: (users: DirectoryUser[]) => DirectoryUser[]) => void
   record: RecordFn
   preset: UserPreset
+  onRefresh?: () => void
 }) {
   const [query, setQuery] = useState('')
   const [role, setRole] = useState<SystemRole | ''>(presetRole(preset.role))
@@ -443,7 +525,11 @@ export function UserManagement({
     const term = query.trim().toLowerCase()
     return visibleUsers.filter((user) => {
       const employee = linkedRecord(user)
-      if (role && user.role !== role) return false
+      if (role) {
+        const r1 = user.role.toLowerCase().replace(/system\s*/, '')
+        const r2 = role.toLowerCase().replace(/system\s*/, '')
+        if (r1 !== r2) return false
+      }
       if (classification && employee?.classification !== classification) return false
       if (status && user.status !== status) return false
       return !term || [user.userId, user.name, user.username].some((value) => value.toLowerCase().includes(term))
@@ -461,19 +547,33 @@ export function UserManagement({
 
   const saveUser = (draft: Draft) => {
     if (dialog?.kind === 'add') {
+      const cleanUser = draft.username.replace(/^@/, '').trim().toLowerCase()
       const nextNumber = directory.reduce((max, user) => Math.max(max, Number(user.userId.split('U')[1]) || 0), 0) + 1
       const created: DirectoryUser = {
         userId: `DEMO-U${String(nextNumber).padStart(3, '0')}`,
         name: draft.name.trim(),
-        username: draft.username.trim().toLowerCase(),
+        username: cleanUser,
         role: draft.role as SystemRole,
         status: 'Active',
         employeeId: draft.employeeId || null,
         simulated: true,
       }
       setDirectory((current) => [created, ...current])
-      setNotice('Demo account created locally. No university account was created.')
-      record('Created a local demonstration account for', created.name, 'Demo account created locally')
+      setNotice(`User account created. Login credentials: username "${cleanUser}", password "${cleanUser}".`)
+      record('Created user account for', created.name, 'User created with credentials')
+
+      // Sync new user to backend PostgreSQL database
+      apiClient.post('/users', {
+        name: draft.name.trim(),
+        username: cleanUser,
+        role: draft.role,
+        employeeId: draft.employeeId || null,
+        password: cleanUser,
+      }).then(() => {
+        if (onRefresh) onRefresh()
+      }).catch((err) => {
+        console.warn('Backend user creation notice:', err)
+      })
     } else if (dialog?.kind === 'edit') {
       const before = directory.find((user) => user.userId === dialog.userId)
       setDirectory((current) => current.map((user) => user.userId === dialog.userId ? {
