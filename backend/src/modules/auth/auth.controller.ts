@@ -10,19 +10,27 @@ export const authController = {
     }
 
     const loginId = identifier || username
-    if (!loginId || !password) {
-      res
-        .status(400)
-        .json({ message: 'Email/username and password are required.' })
+    if (!loginId || typeof loginId !== 'string' || !password || typeof password !== 'string') {
+      res.status(400).json({ message: 'Email/username and password are required.' })
       return
     }
 
+    const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null
+
     try {
-      const outcome = await authService.login(loginId, password)
+      const outcome = await authService.login(loginId.trim(), password, ip)
 
       if (!outcome.ok) {
         if (outcome.reason === 'locked') {
-          res.status(423).json({ message: 'Account locked.' })
+          res.status(423).json({ message: 'Account is locked. Please contact your System Administrator.' })
+          return
+        }
+        if (outcome.reason === 'pending') {
+          res.status(403).json({ message: 'Account approval is pending. Please contact your Administrator.' })
+          return
+        }
+        if (outcome.reason === 'inactive') {
+          res.status(403).json({ message: 'Account is inactive. Access denied.' })
           return
         }
         res.status(401).json({ message: 'Invalid email, username, or password.' })

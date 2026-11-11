@@ -1,3 +1,6 @@
+import { pool } from '../../config/db'
+import { auditService } from '../audit/audit.service'
+
 export type EmployeeClassification = 'Faculty' | 'Staff'
 export type EmploymentStatus = 'Active' | 'Inactive' | 'Resigned'
 export type FundSource = 'F01' | 'F05' | 'F07'
@@ -24,6 +27,7 @@ export interface AppointmentHistoryItem {
 }
 
 export interface HrEmployee {
+  id?: number
   employeeId: string
   name: string
   classification: EmployeeClassification
@@ -40,165 +44,283 @@ export interface HrEmployee {
   assignments: PayrollAssignment[]
   history: AppointmentHistoryItem[]
   username?: string
+  createdAt?: string
 }
 
-const employees: HrEmployee[] = [
-  {
-    employeeId: 'EMP-001',
-    name: 'Juan Dela Cruz',
-    classification: 'Faculty',
-    employmentType: 'Permanent',
-    position: 'Instructor I',
-    office: 'College of Business and Information Technology',
-    supervisor: 'Alex Rivera',
-    employmentStatus: 'Active',
-    appointmentStart: '2023-01-15',
-    appointmentEnd: '',
-    fundSource: 'F01',
-    payBasis: 'Monthly',
-    applicableRate: '31320',
-    username: 'jdelacruz',
-    assignments: [
-      {
-        id: 'ASG-001',
-        payrollTypeId: 'permanent-faculty',
-        effectiveDate: '2023-01-15',
-        status: 'Active',
-        verificationNote: 'HR appointment assignment',
-      },
-    ],
-    history: [
-      {
-        id: 'HIST-001',
-        effectiveDate: '2023-01-15',
-        changeType: 'Initial Appointment',
-        previousValue: 'None',
-        newValue: 'Instructor I',
-      },
-    ],
-  },
-  {
-    employeeId: 'EMP-005',
-    name: 'Maria Santos',
-    classification: 'Staff',
-    employmentType: 'Permanent',
-    position: 'Administrative Officer',
-    office: 'College of Fisheries',
-    supervisor: 'Alex Rivera',
-    employmentStatus: 'Active',
-    appointmentStart: '2022-03-01',
-    appointmentEnd: '',
-    fundSource: 'F01',
-    payBasis: 'Monthly',
-    applicableRate: '26500',
-    username: 'msantos',
-    assignments: [
-      {
-        id: 'ASG-005',
-        payrollTypeId: 'permanent-staff',
-        effectiveDate: '2022-03-01',
-        status: 'Active',
-        verificationNote: 'HR appointment assignment',
-      },
-    ],
-    history: [
-      {
-        id: 'HIST-005',
-        effectiveDate: '2022-03-01',
-        changeType: 'Initial Appointment',
-        previousValue: 'None',
-        newValue: 'Administrative Officer',
-      },
-    ],
-  },
-  {
-    employeeId: 'EMP-006',
-    name: 'Angel Queen Catian',
-    classification: 'Staff',
-    employmentType: 'Permanent',
-    position: 'Administrative Staff',
-    office: 'College of Business and Information Technology',
-    supervisor: 'Alex Rivera',
-    employmentStatus: 'Active',
-    appointmentStart: '2024-01-15',
-    appointmentEnd: '',
-    fundSource: 'F01',
-    payBasis: 'Monthly',
-    applicableRate: '28000',
-    username: 'angelqueen.catian',
-    assignments: [
-      {
-        id: 'ASG-006',
-        payrollTypeId: 'permanent-staff',
-        effectiveDate: '2024-01-15',
-        status: 'Active',
-        verificationNote: 'HR appointment assignment',
-      },
-    ],
-    history: [
-      {
-        id: 'HIST-006',
-        effectiveDate: '2024-01-15',
-        changeType: 'Initial Appointment',
-        previousValue: 'None',
-        newValue: 'Administrative Staff',
-      },
-    ],
-  },
-]
+function mapEmployee(row: any): HrEmployee {
+  return {
+    id: row.id,
+    employeeId: row.employee_no,
+    name: row.full_name,
+    classification: row.classification || 'Staff',
+    employmentType: row.employment_type || 'Permanent',
+    position: row.position,
+    office: row.department,
+    supervisor: row.supervisor || '',
+    employmentStatus: row.employment_status || 'Active',
+    appointmentStart: row.appointment_start || '',
+    appointmentEnd: row.appointment_end || '',
+    fundSource: row.fund_source || 'F01',
+    payBasis: row.pay_basis || 'Monthly',
+    applicableRate: String(row.monthly_salary || '0'),
+    assignments: Array.isArray(row.assignments) ? row.assignments : [],
+    history: Array.isArray(row.history) ? row.history : [],
+    username: row.username || undefined,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
+  }
+}
 
 export const employeesService = {
-  findAll(): HrEmployee[] {
-    return employees
-  },
-
-  findById(id: string): HrEmployee | undefined {
-    return employees.find((e) => e.employeeId === id)
-  },
-
-  findByUsername(username: string): HrEmployee | undefined {
-    const target = username.toLowerCase().trim()
-    return employees.find(
-      (e) =>
-        e.username?.toLowerCase() === target ||
-        e.name.toLowerCase() === target ||
-        target.startsWith(e.username?.toLowerCase() || '___'),
+  async findAll(): Promise<HrEmployee[]> {
+    const res = await pool.query(
+      `SELECT * FROM employees ORDER BY id ASC`,
     )
+    return res.rows.map(mapEmployee)
   },
 
-  create(data: HrEmployee): HrEmployee {
-    const existing = employees.find((e) => e.employeeId === data.employeeId)
-    if (existing) {
-      throw new Error(`Employee ID ${data.employeeId} already exists.`)
+  async findById(idOrEmpNo: string): Promise<HrEmployee | undefined> {
+    const clean = idOrEmpNo.trim()
+    const res = await pool.query(
+      `SELECT * FROM employees 
+       WHERE employee_no = $1 
+          OR (id::text = $1 AND $1 ~ '^[0-9]+$')
+       LIMIT 1`,
+      [clean],
+    )
+    if (res.rows.length === 0) return undefined
+    return mapEmployee(res.rows[0])
+  },
+
+  async findByUsername(username: string): Promise<HrEmployee | undefined> {
+    const clean = username.trim().toLowerCase().replace(/^@/, '')
+    const res = await pool.query(
+      `SELECT * FROM employees 
+       WHERE LOWER(username) = $1 
+          OR LOWER(full_name) = $1 
+          OR employee_no = $1
+       LIMIT 1`,
+      [clean],
+    )
+    if (res.rows.length === 0) return undefined
+    return mapEmployee(res.rows[0])
+  },
+
+  async create(data: HrEmployee, actingUserId?: number | null, ip?: string | null): Promise<HrEmployee> {
+    const employeeNo = data.employeeId?.trim()
+    const fullName = data.name?.trim()
+    const department = data.office?.trim() || 'General Administration'
+    const position = data.position?.trim() || 'Staff'
+    const salary = parseFloat(data.applicableRate) || 0.0
+
+    if (!employeeNo || !fullName) {
+      const err = new Error('Employee ID (number) and Full Name are required.')
+      ;(err as any).statusCode = 400
+      throw err
     }
-    const newRecord: HrEmployee = {
-      ...data,
-      assignments: data.assignments || [],
-      history: data.history || [
-        {
-          id: `HIST-${Date.now()}`,
-          effectiveDate: new Date().toISOString().split('T')[0],
-          changeType: 'Record Created',
-          previousValue: 'None',
-          newValue: data.position,
-        },
-      ],
+
+    // Check duplicate employee_no
+    const dup = await pool.query(
+      `SELECT id FROM employees WHERE employee_no = $1 LIMIT 1`,
+      [employeeNo],
+    )
+    if (dup.rows.length > 0) {
+      const err = new Error(`Employee ID ${employeeNo} already exists.`)
+      ;(err as any).statusCode = 409
+      throw err
     }
-    employees.push(newRecord)
-    return newRecord
+
+    const historyItems = data.history && data.history.length > 0 ? data.history : [
+      {
+        id: `HIST-${Date.now()}`,
+        effectiveDate: data.appointmentStart || new Date().toISOString().split('T')[0],
+        changeType: 'Record Created',
+        previousValue: 'None',
+        newValue: position,
+      },
+    ]
+
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+
+      const res = await client.query(
+        `INSERT INTO employees (
+           employee_no, full_name, department, position, monthly_salary,
+           classification, employment_type, employment_status, fund_source,
+           pay_basis, supervisor, appointment_start, appointment_end,
+           assignments, history, username, created_at
+         ) VALUES (
+           $1, $2, $3, $4, $5,
+           $6, $7, $8, $9,
+           $10, $11, $12, $13,
+           $14::jsonb, $15::jsonb, $16, CURRENT_TIMESTAMP
+         ) RETURNING *`,
+        [
+          employeeNo,
+          fullName,
+          department,
+          position,
+          salary,
+          data.classification || 'Staff',
+          data.employmentType || 'Permanent',
+          data.employmentStatus || 'Active',
+          data.fundSource || 'F01',
+          data.payBasis || 'Monthly',
+          data.supervisor || '',
+          data.appointmentStart || '',
+          data.appointmentEnd || '',
+          JSON.stringify(data.assignments || []),
+          JSON.stringify(historyItems),
+          data.username?.toLowerCase().trim() || null,
+        ],
+      )
+
+      const created = mapEmployee(res.rows[0])
+
+      await auditService.logAction(
+        actingUserId || null,
+        `Created employee record for ${fullName} (${employeeNo})`,
+        { employeeId: created.id, employeeNo: created.employeeId, position, department },
+        ip || null,
+      )
+
+      await client.query('COMMIT')
+      return created
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
   },
 
-  update(id: string, data: Partial<HrEmployee>): HrEmployee | undefined {
-    const index = employees.findIndex((e) => e.employeeId === id)
-    if (index === -1) return undefined
-    employees[index] = { ...employees[index], ...data }
-    return employees[index]
+  async update(
+    idOrEmpNo: string,
+    data: Partial<HrEmployee>,
+    actingUserId?: number | null,
+    ip?: string | null,
+  ): Promise<HrEmployee | undefined> {
+    const existing = await employeesService.findById(idOrEmpNo)
+    if (!existing) return undefined
+
+    const updates: string[] = []
+    const values: any[] = []
+    let pIdx = 1
+
+    if (data.name !== undefined) {
+      updates.push(`full_name = $${pIdx++}`)
+      values.push(data.name.trim())
+    }
+    if (data.office !== undefined) {
+      updates.push(`department = $${pIdx++}`)
+      values.push(data.office.trim())
+    }
+    if (data.position !== undefined) {
+      updates.push(`position = $${pIdx++}`)
+      values.push(data.position.trim())
+    }
+    if (data.applicableRate !== undefined) {
+      updates.push(`monthly_salary = $${pIdx++}`)
+      values.push(parseFloat(data.applicableRate) || 0)
+    }
+    if (data.classification !== undefined) {
+      updates.push(`classification = $${pIdx++}`)
+      values.push(data.classification)
+    }
+    if (data.employmentType !== undefined) {
+      updates.push(`employment_type = $${pIdx++}`)
+      values.push(data.employmentType)
+    }
+    if (data.employmentStatus !== undefined) {
+      updates.push(`employment_status = $${pIdx++}`)
+      values.push(data.employmentStatus)
+    }
+    if (data.fundSource !== undefined) {
+      updates.push(`fund_source = $${pIdx++}`)
+      values.push(data.fundSource)
+    }
+    if (data.payBasis !== undefined) {
+      updates.push(`pay_basis = $${pIdx++}`)
+      values.push(data.payBasis)
+    }
+    if (data.supervisor !== undefined) {
+      updates.push(`supervisor = $${pIdx++}`)
+      values.push(data.supervisor)
+    }
+    if (data.appointmentStart !== undefined) {
+      updates.push(`appointment_start = $${pIdx++}`)
+      values.push(data.appointmentStart)
+    }
+    if (data.appointmentEnd !== undefined) {
+      updates.push(`appointment_end = $${pIdx++}`)
+      values.push(data.appointmentEnd)
+    }
+    if (data.assignments !== undefined) {
+      updates.push(`assignments = $${pIdx++}::jsonb`)
+      values.push(JSON.stringify(data.assignments))
+    }
+    if (data.history !== undefined) {
+      updates.push(`history = $${pIdx++}::jsonb`)
+      values.push(JSON.stringify(data.history))
+    }
+    if (data.username !== undefined) {
+      updates.push(`username = $${pIdx++}`)
+      values.push(data.username ? data.username.toLowerCase().trim() : null)
+    }
+
+    if (updates.length === 0) return existing
+
+    values.push(existing.id)
+
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const res = await client.query(
+        `UPDATE employees SET ${updates.join(', ')} WHERE id = $${pIdx} RETURNING *`,
+        values,
+      )
+      const updated = mapEmployee(res.rows[0])
+
+      await auditService.logAction(
+        actingUserId || null,
+        `Updated employee record for ${updated.name} (${updated.employeeId})`,
+        { employeeId: updated.id, employeeNo: updated.employeeId, updatedFields: Object.keys(data) },
+        ip || null,
+      )
+
+      await client.query('COMMIT')
+      return updated
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
   },
 
-  delete(id: string): boolean {
-    const index = employees.findIndex((e) => e.employeeId === id)
-    if (index === -1) return false
-    employees.splice(index, 1)
-    return true
+  async delete(idOrEmpNo: string, actingUserId?: number | null, ip?: string | null): Promise<boolean> {
+    const existing = await employeesService.findById(idOrEmpNo)
+    if (!existing) return false
+
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query(`DELETE FROM employees WHERE id = $1`, [existing.id])
+
+      await auditService.logAction(
+        actingUserId || null,
+        `Deleted employee record for ${existing.name} (${existing.employeeId})`,
+        { employeeId: existing.id, employeeNo: existing.employeeId },
+        ip || null,
+      )
+
+      await client.query('COMMIT')
+      return true
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
   },
 }
