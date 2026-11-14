@@ -105,4 +105,109 @@ export const authService = {
       },
     }
   },
+
+  async requestPasswordReset(
+    identifier: string,
+    ipAddress?: string | null,
+  ): Promise<{ success: boolean; message: string; resetToken?: string }> {
+    const user = await usersService.findByIdentifier(identifier)
+    if (!user || !user.id) {
+      await auditService.logAction(
+        null,
+        `Password reset requested for nonexistent identifier "${identifier}"`,
+        { identifier },
+        ipAddress,
+      )
+      return {
+        success: true,
+        message: 'If an account matches that email or username, password reset instructions have been generated.',
+      }
+    }
+
+    const resetToken = jwt.sign(
+      {
+        id: user.id,
+        username: user.username,
+        purpose: 'password_reset',
+      },
+      getJwtSecret(),
+      {
+        subject: String(user.id),
+        expiresIn: '30m',
+        issuer: 'msu-naawan-payroll-api',
+        audience: 'msu-naawan-payroll-client',
+      },
+    )
+
+    await auditService.logAction(
+      user.id,
+      `Password reset requested for user "${user.username}"`,
+      { username: user.username, email: user.email },
+      ipAddress,
+    )
+
+    return {
+      success: true,
+      message: 'Password reset link has been dispatched.',
+      resetToken,
+    }
+  },
+
+  async resetPassword(
+    token: string,
+    newPassword: string,
+    ipAddress?: string | null,
+  ): Promise<{ success: boolean; message: string }> {
+    if (!token || typeof token !== 'string') {
+      const err = new Error('Reset token is required.')
+      ;(err as any).statusCode = 400
+      throw err
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+      const err = new Error('Password must be at least 8 characters long.')
+      ;(err as any).statusCode = 400
+      throw err
+    }
+
+    let payload: any
+    try {
+      payload = jwt.verify(token, getJwtSecret(), {
+        issuer: 'msu-naawan-payroll-api',
+        audience: 'msu-naawan-payroll-client',
+      })
+    } catch {
+      const err = new Error('The password reset link is invalid or has expired.')
+      ;(err as any).statusCode = 400
+      throw err
+    }
+
+    if (!payload || payload.purpose !== 'password_reset' || !payload.id) {
+      const err = new Error('Invalid reset token.')
+      ;(err as any).statusCode = 400
+      throw err
+    }
+
+    const userId = Number(payload.id)
+    const existing = await usersService.findById(userId)
+    if (!existing) {
+      const err = new Error('User not found.')
+      ;(err as any).statusCode = 404
+      throw err
+    }
+
+    await usersService.update(userId, { password: newPassword }, userId, ipAddress)
+
+    await auditService.logAction(
+      userId,
+      `Password reset successfully completed for user "${existing.username}"`,
+      { username: existing.username },
+      ipAddress,
+    )
+
+    return {
+      success: true,
+      message: 'Your password has been successfully updated.',
+    }
+  },
 }

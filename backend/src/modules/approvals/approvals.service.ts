@@ -280,7 +280,8 @@ export const approvalsService = {
     if (!currentStep) {
       // If no pending step exists, create one from the first route stage
       const firstStage = route[0]
-      const currentStage = payroll.stage || firstStage.stageName
+      const matchingStage = route.find((r) => r.stageName === payroll.stage)
+      const currentStage = matchingStage ? matchingStage.stageName : firstStage.stageName
       const insRes = await pool.query(
         `INSERT INTO approvals (payroll_id, stage, status, sequence, updated_at)
          VALUES ($1, $2, 'Pending', 1, CURRENT_TIMESTAMP)

@@ -3,6 +3,7 @@ import { useRef, useState, type Dispatch, type SetStateAction } from "react"
 import { Alert, Button, Icon, TextField } from "../../MsuPayroll"
 import { Modal, SelectField, Tag, usePopover } from "../../admin/ui"
 import type { MockUser } from "../../auth/mockData"
+import { approvalsApi } from "../../api/approvals"
 import type {
   DownstreamDocumentBundle,
   DvEmployeeSummary,
@@ -290,6 +291,16 @@ function ReviewWorkspace({
       return
     }
     lock.current = true
+    const numericPayrollId = parseInt(String(latest.payrollId || latest.id).replace(/\D/g, ''), 10)
+    if (!isNaN(numericPayrollId)) {
+      approvalsApi.submitDecision({
+        payrollId: numericPayrollId,
+        decision: action === "Returned" ? "Returned" : "Approved",
+        remarks,
+      }).catch((e) => {
+        console.warn('Live chancellor approval decision sync noted:', e.message)
+      })
+    }
     setRecords((items) =>
       items.map((item) => (item.id === latest.id ? result.record : item)),
     )

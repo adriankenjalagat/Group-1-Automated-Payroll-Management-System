@@ -1,4 +1,4 @@
-import { pool } from './config/db'
+import { pool } from '../src/config/db'
 import bcrypt from 'bcryptjs'
 
 const BASE = 'http://localhost:3000/api'
@@ -262,7 +262,7 @@ async function main() {
   // 9. Test PERA Computation per SRS (TASK 5)
   console.log('\n💰 Testing PERA SRS Corrections (TASK 5)')
   // Verify with computePayroll that both Permanent and Contractual get PERA
-  const { computePayroll } = await import('./modules/payroll/payroll.service')
+  const { computePayroll } = await import('../src/modules/payroll/payroll.service')
 
   const permanentPayroll = computePayroll({
     monthlySalary: 30000,

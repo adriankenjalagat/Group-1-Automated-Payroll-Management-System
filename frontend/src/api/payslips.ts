@@ -10,4 +10,14 @@ export const payslipsApi = {
   getByEmployee: (employeeId: string): Promise<PayslipRecord[]> => {
     return apiClient.get<PayslipRecord[]>(`/payslips/employee/${encodeURIComponent(employeeId)}`)
   },
+
+  getDeductionReport: (period?: string): Promise<any> => {
+    const query = period ? `?period=${encodeURIComponent(period)}` : ''
+    return apiClient.get<any>(`/payslips/reports/deductions${query}`)
+  },
+
+  getPayrollRegister: (period?: string): Promise<any> => {
+    const query = period ? `?period=${encodeURIComponent(period)}` : ''
+    return apiClient.get<any>(`/payslips/reports/register${query}`)
+  },
 }

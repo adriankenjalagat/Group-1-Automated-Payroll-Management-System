@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test:smoke": "tsx scripts/live_smoke.ts",
+    "test:e2e": "tsx scripts/e2e_workflow_tests.ts"
   },
   "dependencies": {
     "@types/multer": "^2.3.0",

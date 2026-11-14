@@ -20,7 +20,14 @@ export const disbursementController = {
 
   async getByPayroll(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const payrollId = parseInt(getParam(req.params.payrollId), 10)
+      const rawParam = getParam(req.params.payrollId)
+      let payrollId = parseInt(rawParam, 10)
+      if (isNaN(payrollId) && rawParam) {
+        const match = rawParam.match(/\d+/)
+        if (match) {
+          payrollId = parseInt(match[0], 10)
+        }
+      }
       if (isNaN(payrollId)) {
         res.status(400).json({ message: 'Invalid payroll ID.' })
         return
@@ -41,7 +48,14 @@ export const disbursementController = {
 
   async getDv(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const payrollId = parseInt(getParam(req.params.payrollId), 10)
+      const rawParam = getParam(req.params.payrollId)
+      let payrollId = parseInt(rawParam, 10)
+      if (isNaN(payrollId) && rawParam) {
+        const match = rawParam.match(/\d+/)
+        if (match) {
+          payrollId = parseInt(match[0], 10)
+        }
+      }
       if (isNaN(payrollId)) {
         res.status(400).json({ message: 'Invalid payroll ID.' })
         return
@@ -57,7 +71,14 @@ export const disbursementController = {
 
   async getBudgetDoc(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const payrollId = parseInt(getParam(req.params.payrollId), 10)
+      const rawParam = getParam(req.params.payrollId)
+      let payrollId = parseInt(rawParam, 10)
+      if (isNaN(payrollId) && rawParam) {
+        const match = rawParam.match(/\d+/)
+        if (match) {
+          payrollId = parseInt(match[0], 10)
+        }
+      }
       if (isNaN(payrollId)) {
         res.status(400).json({ message: 'Invalid payroll ID.' })
         return
@@ -73,7 +94,14 @@ export const disbursementController = {
 
   async getLandBank(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const payrollId = parseInt(getParam(req.params.payrollId), 10)
+      const rawParam = getParam(req.params.payrollId)
+      let payrollId = parseInt(rawParam, 10)
+      if (isNaN(payrollId) && rawParam) {
+        const match = rawParam.match(/\d+/)
+        if (match) {
+          payrollId = parseInt(match[0], 10)
+        }
+      }
       if (isNaN(payrollId)) {
         res.status(400).json({ message: 'Invalid payroll ID.' })
         return
@@ -89,7 +117,14 @@ export const disbursementController = {
 
   async release(req: AuthenticatedRequest, res: Response): Promise<void> {
     try {
-      const payrollId = parseInt(getParam(req.params.payrollId), 10)
+      const rawParam = getParam(req.params.payrollId)
+      let payrollId = parseInt(rawParam, 10)
+      if (isNaN(payrollId) && rawParam) {
+        const match = rawParam.match(/\d+/)
+        if (match) {
+          payrollId = parseInt(match[0], 10)
+        }
+      }
       if (isNaN(payrollId)) {
         res.status(400).json({ message: 'Invalid payroll ID.' })
         return

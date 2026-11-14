@@ -125,7 +125,7 @@ export function SignIn({
   )
 }
 
-export function ForgotPassword({ onBack, onSent }: { onBack: () => void; onSent: (id: string) => void }) {
+export function ForgotPassword({ onBack, onSent }: { onBack: () => void; onSent: (id: string, token?: string) => void }) {
   const [identifier, setIdentifier] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -135,8 +135,14 @@ export function ForgotPassword({ onBack, onSent }: { onBack: () => void; onSent:
     if (!identifier.trim()) return setError('Enter your email or username.')
     setError('')
     setLoading(true)
-    await wait()
-    onSent(identifier.trim())
+    try {
+      const res = await authApi.forgotPassword(identifier.trim())
+      setLoading(false)
+      onSent(identifier.trim(), res.resetToken)
+    } catch (err: any) {
+      setLoading(false)
+      setError(err.message || 'Failed to request reset instructions.')
+    }
   }
 
   return (

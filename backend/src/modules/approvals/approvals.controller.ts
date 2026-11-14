@@ -126,7 +126,13 @@ export const approvalsController = {
         costCenter?: string
       }
 
-      const pId = typeof payrollId === 'number' ? payrollId : parseInt(String(payrollId), 10)
+      let pId = typeof payrollId === 'number' ? payrollId : parseInt(String(payrollId), 10)
+      if (isNaN(pId) && payrollId) {
+        const match = String(payrollId).match(/\d+/)
+        if (match) {
+          pId = parseInt(match[0], 10)
+        }
+      }
       if (!pId || isNaN(pId)) {
         res.status(400).json({ message: 'Valid payroll ID is required.' })
         return

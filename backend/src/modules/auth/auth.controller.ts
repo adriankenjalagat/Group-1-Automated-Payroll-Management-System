@@ -47,4 +47,41 @@ export const authController = {
       res.status(500).json({ message: 'Internal server error during login.' })
     }
   },
+
+  async forgotPassword(req: Request, res: Response): Promise<void> {
+    const { identifier } = req.body as { identifier?: string }
+    if (!identifier || typeof identifier !== 'string' || !identifier.trim()) {
+      res.status(400).json({ message: 'Email or username is required.' })
+      return
+    }
+
+    const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null
+
+    try {
+      const result = await authService.requestPasswordReset(identifier.trim(), ip)
+      res.status(200).json(result)
+    } catch (error) {
+      console.error('[authController] forgotPassword error:', error)
+      res.status(500).json({ message: 'Internal server error during password reset request.' })
+    }
+  },
+
+  async resetPassword(req: Request, res: Response): Promise<void> {
+    const { token, password } = req.body as { token?: string; password?: string }
+    if (!token || !password) {
+      res.status(400).json({ message: 'Reset token and new password are required.' })
+      return
+    }
+
+    const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null
+
+    try {
+      const result = await authService.resetPassword(token, password, ip)
+      res.status(200).json(result)
+    } catch (error: any) {
+      console.error('[authController] resetPassword error:', error)
+      const status = error.statusCode || 400
+      res.status(status).json({ message: error.message || 'Failed to reset password.' })
+    }
+  },
 }
