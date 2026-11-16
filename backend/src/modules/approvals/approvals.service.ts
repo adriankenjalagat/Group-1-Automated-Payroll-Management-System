@@ -70,13 +70,15 @@ function mapRouteRow(row: any): ApprovalRouteRule {
  * matching rule (exact payroll_type_id + fund_source + cost_center) first, then
  * falling back to wildcard ('*') rules.
  */
-async function getApprovalRoute(
+export async function getApprovalRoute(
   payrollTypeId: string,
   fundSource: string,
   costCenter: string,
+  clientOrPool?: any,
 ): Promise<ApprovalRouteRule[]> {
+  const q = clientOrPool || pool
   // Query all active rules, ordered by specificity (exact matches first) then sequence
-  const res = await pool.query(
+  const res = await q.query(
     `SELECT * FROM approval_routes
      WHERE is_active = TRUE
        AND (payroll_type_id = $1 OR payroll_type_id = '*')
@@ -214,6 +216,114 @@ export const approvalsService = {
       [id],
     )
     return res.rows.length > 0
+  },
+
+  /**
+   * Validates that every configured approval stage for a payroll has been approved.
+   * Rejects direct locking if approvals are missing, incomplete, returned, or rejected.
+   */
+  async validateAllStagesApproved(
+    payrollId: number,
+    clientOrPool?: any,
+  ): Promise<{ valid: boolean; route: ApprovalRouteRule[]; approvals: ApprovalStep[] }> {
+    const q = clientOrPool || pool
+
+    // 1. Fetch payroll details needed for route matching
+    const pRes = await q.query(
+      `SELECT id, payroll_type_id, fund_source, cost_center, department, status, stage, locked
+       FROM payroll WHERE id = $1`,
+      [payrollId],
+    )
+    if (pRes.rows.length === 0) {
+      const err = new Error(`Payroll record #${payrollId} not found.`)
+        ; (err as any).statusCode = 404
+      throw err
+    }
+    const payroll = pRes.rows[0]
+
+    // 2. Resolve configured route for this payroll
+    const route = await getApprovalRoute(
+      payroll.payroll_type_id || '*',
+      payroll.fund_source || '*',
+      payroll.cost_center || payroll.department || '*',
+      q,
+    )
+
+    if (route.length === 0) {
+      const err = new Error(`No approval route is configured for this payroll type and fund source.`)
+        ; (err as any).statusCode = 400
+      throw err
+    }
+
+    // 3. Reject if payroll itself is marked Rejected or Returned
+    if (payroll.status === 'Rejected') {
+      const err = new Error(
+        `Cannot lock payroll #${payrollId}: payroll has been rejected and cannot be locked or marked Ready for DV.`,
+      )
+        ; (err as any).statusCode = 400
+      throw err
+    }
+    if (payroll.status === 'Returned') {
+      const err = new Error(
+        `Cannot lock payroll #${payrollId}: payroll has been returned for correction and has not completed re-approval.`,
+      )
+        ; (err as any).statusCode = 400
+      throw err
+    }
+
+    // 4. Fetch all approval records for this payroll
+    const aRes = await q.query(
+      `SELECT * FROM approvals WHERE payroll_id = $1 ORDER BY sequence ASC, id ASC`,
+      [payrollId],
+    )
+    const approvals = aRes.rows.map(mapApprovalRow)
+
+    if (approvals.length === 0) {
+      const err = new Error(
+        `Cannot lock payroll #${payrollId}: no approval stages have been recorded or approved. Required approval workflow: ${route.map((r) => r.stageName).join(' -> ')}.`,
+      )
+        ; (err as any).statusCode = 400
+      throw err
+    }
+
+    // Build map of latest approval record per stage
+    const latestStepByStage = new Map<string, ApprovalStep>()
+    for (const app of approvals) {
+      latestStepByStage.set(app.stage, app)
+    }
+
+    // 5. Reject if any approval stage has a latest status of Rejected or Returned
+    for (const [stage, step] of latestStepByStage.entries()) {
+      if (step.status === 'Rejected') {
+        const err = new Error(
+          `Cannot lock payroll #${payrollId}: approval stage "${stage}" was rejected. A rejected payroll cannot be approved or marked Ready for DV.`,
+        )
+          ; (err as any).statusCode = 400
+        throw err
+      }
+      if (step.status === 'Returned') {
+        const err = new Error(
+          `Cannot lock payroll #${payrollId}: approval stage "${stage}" was returned for correction and has not completed re-approval.`,
+        )
+          ; (err as any).statusCode = 400
+        throw err
+      }
+    }
+
+    // 6. Verify that EVERY required stage in the configured route has an Approved record as its latest step
+    for (const routeStage of route) {
+      const latestStep = latestStepByStage.get(routeStage.stageName)
+      if (!latestStep || latestStep.status !== 'Approved') {
+        const currentStatus = latestStep ? latestStep.status : 'Not Started'
+        const err = new Error(
+          `Cannot lock payroll #${payrollId}: required approval stage "${routeStage.stageName}" (sequence ${routeStage.sequenceOrder}) is incomplete (Current status: ${currentStatus}). All configured approval stages must be approved before locking.`,
+        )
+          ; (err as any).statusCode = 400
+        throw err
+      }
+    }
+
+    return { valid: true, route, approvals }
   },
 
   async processDecision(params: {

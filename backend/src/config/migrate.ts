@@ -4,7 +4,7 @@ import path from 'path'
 import { pool } from './db'
 
 export async function runMigrations(): Promise<void> {
-  const migrationFiles = ['migration.sql', 'migration_phase2.sql']
+  const migrationFiles = ['migration.sql', 'migration_phase2.sql', 'migration_phase_b.sql']
   const client = await pool.connect()
 
   try {

@@ -107,7 +107,8 @@ export const disbursementController = {
         return
       }
 
-      const lb = await disbursementService.generateLandBankFile(payrollId)
+      const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null
+      const lb = await disbursementService.generateLandBankFile(payrollId, req.user?.id, ip)
       res.status(200).json(lb)
     } catch (err: any) {
       console.error('[disbursementController] getLandBank error:', err)

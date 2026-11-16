@@ -51,6 +51,23 @@ export interface LandBankRecord {
   employeeName: string
   netAmount: number
   validAccount: boolean
+  bankName?: string
+}
+
+export interface ManualDisbursementRecord {
+  employeeId?: number
+  employeeNo: string
+  employeeName: string
+  netAmount: number
+  reason: string
+}
+
+export interface LandBankReconciliation {
+  totalApprovedPayrollAmount: number
+  bankDisbursementAmount: number
+  manualDisbursementAmount: number
+  isReconciled: boolean
+  accountingDecisionRequired: string
 }
 
 export interface LandBankExport {
@@ -62,6 +79,23 @@ export interface LandBankExport {
   records: LandBankRecord[]
   content: string
   missingAccountsCount: number
+  manualDisbursementEmployees: ManualDisbursementRecord[]
+  manualDisbursementAmount: number
+  totalApprovedPayrollAmount: number
+  reconciliation: LandBankReconciliation
+}
+
+/**
+ * Validates LandBank account numbers:
+ * Must be digits only, standard length 10 to 16 digits, non-dummy sequence.
+ */
+export function isValidLandBankAccount(accountNumber?: string | null): boolean {
+  if (!accountNumber) return false
+  const clean = accountNumber.trim()
+  if (!/^\d{10,16}$/.test(clean)) return false
+  if (/^(\d)\1+$/.test(clean)) return false
+  if (clean === '1234567890' || clean === '0123456789' || clean === '9876543210') return false
+  return true
 }
 
 export interface DisbursementRecord {
@@ -334,9 +368,13 @@ export const disbursementService = {
   /**
    * Generates LandBank Electronic Batch Upload File Data
    */
-  async generateLandBankFile(payrollId: number): Promise<LandBankExport> {
+  async generateLandBankFile(
+    payrollId: number,
+    actingUserId?: number | null,
+    ip?: string | null,
+  ): Promise<LandBankExport> {
     const pRes = await pool.query(
-      `SELECT p.*, e.employee_no, e.full_name
+      `SELECT p.*, e.employee_no, e.full_name, e.bank_account_number, e.bank_name
        FROM payroll p
        LEFT JOIN employees e ON p.employee_id = e.id
        WHERE p.id = $1`,
@@ -352,34 +390,96 @@ export const disbursementService = {
     const companyCode = 'MSUN-001'
 
     const net = parseFloat(payroll.net_pay) || 0
-    const rawAccount = '1234567890' // Default placeholder format compliant with LandBank 10-digit account standard
+    const rawAccount = payroll.bank_account_number ? String(payroll.bank_account_number).trim() : ''
 
-    const records: LandBankRecord[] = [
-      {
+    const records: LandBankRecord[] = []
+    const manualDisbursementEmployees: ManualDisbursementRecord[] = []
+
+    const hasValidBank = isValidLandBankAccount(rawAccount)
+
+    if (hasValidBank) {
+      records.push({
         accountNumber: rawAccount,
         employeeNo: payroll.employee_no || `EMP-${payroll.employee_id || 1}`,
         employeeName: payroll.employee_name,
         netAmount: net,
         validAccount: true,
-      },
-    ]
+        bankName: payroll.bank_name || 'LandBank',
+      })
+    } else {
+      let reason = 'No bank account on record'
+      if (rawAccount) {
+        if (/^1234567890|0123456789|0000000000/.test(rawAccount)) {
+          reason = 'Rejected placeholder or dummy bank account number'
+        } else if (!/^\d+$/.test(rawAccount)) {
+          reason = 'Bank account number contains non-numeric characters'
+        } else if (rawAccount.length < 10) {
+          reason = 'Bank account number is incomplete (under 10 digits)'
+        } else {
+          reason = 'Invalid bank account number format'
+        }
+      }
+      manualDisbursementEmployees.push({
+        employeeId: payroll.employee_id,
+        employeeNo: payroll.employee_no || `EMP-${payroll.employee_id || 1}`,
+        employeeName: payroll.employee_name,
+        netAmount: net,
+        reason,
+      })
+    }
+
+    const bankDisbursementAmount = Math.round(records.reduce((s, r) => s + r.netAmount, 0) * 100) / 100
+    const manualDisbursementAmount = Math.round(manualDisbursementEmployees.reduce((s, r) => s + r.netAmount, 0) * 100) / 100
+    const totalApprovedPayrollAmount = net
 
     // Generate formatted content compliant with university electronic bank payroll format
-    let content = `H|${companyCode}|${new Date().toISOString().split('T')[0]}|1|${net.toFixed(2)}\n`
+    let content = `H|${companyCode}|${new Date().toISOString().split('T')[0]}|${records.length}|${bankDisbursementAmount.toFixed(2)}\n`
     records.forEach((r, idx) => {
       content += `D|${idx + 1}|${r.accountNumber}|${r.employeeName.toUpperCase()}|${r.netAmount.toFixed(2)}\n`
     })
-    content += `T|1|${net.toFixed(2)}\n`
+    content += `T|${records.length}|${bankDisbursementAmount.toFixed(2)}\n`
+
+    const reconciliation: LandBankReconciliation = {
+      totalApprovedPayrollAmount,
+      bankDisbursementAmount,
+      manualDisbursementAmount,
+      isReconciled: Math.abs(totalApprovedPayrollAmount - (bankDisbursementAmount + manualDisbursementAmount)) < 0.01,
+      accountingDecisionRequired:
+        'University Accounting Decision Required: Determine whether a single master Disbursement Voucher (DV) is issued with split ADA and MDS Check payment lines, or whether separate DVs must be issued for electronic LandBank bank transfer versus manual payroll check/cash disbursement.',
+    }
+
+    // Audit logging for LandBank export generation/download
+    if (actingUserId !== undefined) {
+      await auditService.logAction(
+        actingUserId || null,
+        `Generated/downloaded LandBank electronic disbursement file for payroll #${payrollId}`,
+        {
+          payrollId,
+          filename,
+          bankDisbursementCount: records.length,
+          bankDisbursementAmount,
+          manualDisbursementCount: manualDisbursementEmployees.length,
+          manualDisbursementAmount,
+          totalApprovedPayrollAmount,
+          isReconciled: reconciliation.isReconciled,
+        },
+        ip || null,
+      )
+    }
 
     return {
       filename,
       generatedAt: new Date().toISOString(),
       companyCode,
       totalRecords: records.length,
-      totalAmount: net,
+      totalAmount: bankDisbursementAmount,
       records,
       content,
-      missingAccountsCount: records.filter((r) => !r.validAccount).length,
+      missingAccountsCount: manualDisbursementEmployees.length,
+      manualDisbursementEmployees,
+      manualDisbursementAmount,
+      totalApprovedPayrollAmount,
+      reconciliation,
     }
   },
 

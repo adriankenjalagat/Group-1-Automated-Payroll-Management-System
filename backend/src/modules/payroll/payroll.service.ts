@@ -1,5 +1,6 @@
 import { pool } from '../../config/db'
 import { auditService } from '../audit/audit.service'
+import { approvalsService } from '../approvals/approvals.service'
 
 export interface DeductionItem {
   id: string
@@ -624,34 +625,66 @@ export const payrollService = {
     actingUserId?: number | null,
     ip?: string | null,
   ): Promise<PayrollRecord> {
-    const existing = await payrollService.findById(id)
-    if (!existing) {
-      const err = new Error(`Payroll record #${id} not found.`)
-      ;(err as any).statusCode = 404
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+
+      // 1. Transactional row lock to prevent race conditions during concurrent approval/locking attempts
+      const pRes = await client.query(
+        `SELECT * FROM payroll WHERE id = $1 FOR UPDATE`,
+        [id],
+      )
+      if (pRes.rows.length === 0) {
+        const err = new Error(`Payroll record #${id} not found.`)
+        ;(err as any).statusCode = 404
+        throw err
+      }
+      const existing = pRes.rows[0]
+
+      // 2. Requirements 1-5: Validate that every stage in the configured route has an 'Approved' decision
+      await approvalsService.validateAllStagesApproved(id, client)
+
+      // 3. Atomically update payroll status, stage, locking flag, and ready_for_dv
+      const res = await client.query(
+        `UPDATE payroll SET
+           locked = TRUE,
+           locked_at = CURRENT_TIMESTAMP,
+           locked_by = $1,
+           stage = 'Completed',
+           current_approval_holder = 'Completed',
+           status = 'Approved',
+           ready_for_dv = TRUE,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = $2
+         RETURNING *`,
+        [actingUserId || null, id],
+      )
+
+      // 4. Ensure initial disbursement record is scheduled
+      await client.query(
+        `INSERT INTO disbursements (
+           payroll_id, method, status, total_amount, fund_source, created_at
+         )
+         SELECT $1, 'Bank Transfer', 'Scheduled', $2, $3, CURRENT_TIMESTAMP
+         WHERE NOT EXISTS (SELECT 1 FROM disbursements WHERE payroll_id = $1)`,
+        [id, existing.net_pay, existing.fund_source || 'F01'],
+      )
+
+      // 5. Preserve audit trail
+      await auditService.logAction(
+        actingUserId || null,
+        `Final approval and locking of payroll #${id} for ${existing.employee_name}`,
+        { payrollId: id, status: 'Approved', locked: true, readyForDv: true },
+        ip || null,
+      )
+
+      await client.query('COMMIT')
+      return mapPayrollRow(res.rows[0])
+    } catch (err) {
+      await client.query('ROLLBACK')
       throw err
+    } finally {
+      client.release()
     }
-
-    const res = await pool.query(
-      `UPDATE payroll SET
-         locked = TRUE,
-         locked_at = CURRENT_TIMESTAMP,
-         locked_by = $1,
-         stage = 'Completed',
-         status = 'Approved',
-         ready_for_dv = TRUE,
-         updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2
-       RETURNING *`,
-      [actingUserId || null, id],
-    )
-
-    await auditService.logAction(
-      actingUserId || null,
-      `Final approval and locking of payroll #${id} for ${existing.employeeName}`,
-      { payrollId: id, status: 'Approved', locked: true, readyForDv: true },
-      ip || null,
-    )
-
-    return mapPayrollRow(res.rows[0])
   },
 }

@@ -41,13 +41,29 @@ export interface HrEmployee {
   fundSource: FundSource
   payBasis: PayBasis
   applicableRate: string
+  bankAccountNumber?: string
+  bankName?: string
   assignments: PayrollAssignment[]
   history: AppointmentHistoryItem[]
   username?: string
   createdAt?: string
 }
 
-function mapEmployee(row: any): HrEmployee {
+/**
+ * Masks a bank account number to avoid exposing full credentials in ordinary API responses.
+ * (e.g. "1234567890" -> "******7890")
+ */
+export function maskBankAccount(accountNumber?: string | null): string | undefined {
+  if (!accountNumber) return undefined
+  const clean = accountNumber.trim()
+  if (!clean) return undefined
+  if (clean.length <= 4) {
+    return '****'
+  }
+  return '*'.repeat(clean.length - 4) + clean.slice(-4)
+}
+
+function mapEmployee(row: any, options?: { unmaskBank?: boolean }): HrEmployee {
   return {
     id: row.id,
     employeeId: row.employee_no,
@@ -63,6 +79,10 @@ function mapEmployee(row: any): HrEmployee {
     fundSource: row.fund_source || 'F01',
     payBasis: row.pay_basis || 'Monthly',
     applicableRate: String(row.monthly_salary || '0'),
+    bankAccountNumber: options?.unmaskBank
+      ? (row.bank_account_number || undefined)
+      : maskBankAccount(row.bank_account_number),
+    bankName: row.bank_name || undefined,
     assignments: Array.isArray(row.assignments) ? row.assignments : [],
     history: Array.isArray(row.history) ? row.history : [],
     username: row.username || undefined,
@@ -75,10 +95,10 @@ export const employeesService = {
     const res = await pool.query(
       `SELECT * FROM employees ORDER BY id ASC`,
     )
-    return res.rows.map(mapEmployee)
+    return res.rows.map((row) => mapEmployee(row))
   },
 
-  async findById(idOrEmpNo: string): Promise<HrEmployee | undefined> {
+  async findById(idOrEmpNo: string, options?: { unmaskBank?: boolean }): Promise<HrEmployee | undefined> {
     const clean = idOrEmpNo.trim()
     const res = await pool.query(
       `SELECT * FROM employees 
@@ -88,10 +108,10 @@ export const employeesService = {
       [clean],
     )
     if (res.rows.length === 0) return undefined
-    return mapEmployee(res.rows[0])
+    return mapEmployee(res.rows[0], options)
   },
 
-  async findByUsername(username: string): Promise<HrEmployee | undefined> {
+  async findByUsername(username: string, options?: { unmaskBank?: boolean }): Promise<HrEmployee | undefined> {
     const clean = username.trim().toLowerCase().replace(/^@/, '')
     const res = await pool.query(
       `SELECT * FROM employees 
@@ -102,7 +122,7 @@ export const employeesService = {
       [clean],
     )
     if (res.rows.length === 0) return undefined
-    return mapEmployee(res.rows[0])
+    return mapEmployee(res.rows[0], options)
   },
 
   async create(data: HrEmployee, actingUserId?: number | null, ip?: string | null): Promise<HrEmployee> {
@@ -148,12 +168,12 @@ export const employeesService = {
            employee_no, full_name, department, position, monthly_salary,
            classification, employment_type, employment_status, fund_source,
            pay_basis, supervisor, appointment_start, appointment_end,
-           assignments, history, username, created_at
+           assignments, history, username, bank_account_number, bank_name, created_at
          ) VALUES (
            $1, $2, $3, $4, $5,
            $6, $7, $8, $9,
            $10, $11, $12, $13,
-           $14::jsonb, $15::jsonb, $16, CURRENT_TIMESTAMP
+           $14::jsonb, $15::jsonb, $16, $17, $18, CURRENT_TIMESTAMP
          ) RETURNING *`,
         [
           employeeNo,
@@ -172,6 +192,8 @@ export const employeesService = {
           JSON.stringify(data.assignments || []),
           JSON.stringify(historyItems),
           data.username?.toLowerCase().trim() || null,
+          data.bankAccountNumber ? data.bankAccountNumber.trim() : null,
+          data.bankName ? data.bankName.trim() : (data.bankAccountNumber ? 'LandBank' : null),
         ],
       )
 
@@ -180,7 +202,14 @@ export const employeesService = {
       await auditService.logAction(
         actingUserId || null,
         `Created employee record for ${fullName} (${employeeNo})`,
-        { employeeId: created.id, employeeNo: created.employeeId, position, department },
+        {
+          employeeId: created.id,
+          employeeNo: created.employeeId,
+          position,
+          department,
+          hasBankAccount: Boolean(data.bankAccountNumber),
+          bankName: data.bankName || (data.bankAccountNumber ? 'LandBank' : undefined),
+        },
         ip || null,
       )
 
@@ -266,6 +295,17 @@ export const employeesService = {
     if (data.username !== undefined) {
       updates.push(`username = $${pIdx++}`)
       values.push(data.username ? data.username.toLowerCase().trim() : null)
+    }
+    if (data.bankAccountNumber !== undefined) {
+      // Do not overwrite with asterisks if the client sends back the masked value
+      if (!data.bankAccountNumber.includes('*')) {
+        updates.push(`bank_account_number = $${pIdx++}`)
+        values.push(data.bankAccountNumber ? data.bankAccountNumber.trim() : null)
+      }
+    }
+    if (data.bankName !== undefined) {
+      updates.push(`bank_name = $${pIdx++}`)
+      values.push(data.bankName ? data.bankName.trim() : null)
     }
 
     if (updates.length === 0) return existing

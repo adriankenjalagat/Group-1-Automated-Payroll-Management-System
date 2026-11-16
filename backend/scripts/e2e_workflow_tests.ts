@@ -114,6 +114,16 @@ async function runE2ESuite() {
     [hashedPw],
   )
 
+  // 8. Cashier Account
+  const cashierIns = await pool.query(
+    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
+     VALUES ('USR-E2E-CASHIER', 'E2E Cashier Officer', 'e2e_cashier@test.msunaawan.edu.ph', 'e2e_cashier', $1, 'Cashier Office', 'Cashier Office', ARRAY['Cashier'], 'active')
+     ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'
+     RETURNING id`,
+    [hashedPw],
+  )
+  const cashierUserId = cashierIns.rows[0].id
+
   // =========================================================================
   // WORKFLOW 1: Valid and Invalid Login
   // =========================================================================
@@ -134,6 +144,9 @@ async function runE2ESuite() {
 
   const validHr = await api('POST', '/auth/login', { username: 'e2e_hr', password: 'E2eTest#2026' })
   const hrToken = validHr.data?.token
+
+  const validCashier = await api('POST', '/auth/login', { username: 'e2e_cashier', password: 'E2eTest#2026' })
+  const cashierToken = validCashier.data?.token
 
   const badPassword = await api('POST', '/auth/login', { username: 'e2e_admin', password: 'WrongPassword!99' })
   assert(badPassword.status === 401, '1. Auth', 'Invalid password returns 401 Unauthorized')
@@ -188,7 +201,7 @@ async function runE2ESuite() {
   assert(empRouteConfig.status === 403, '2. RBAC', 'Employee role cannot modify approval routes (403 Forbidden)')
 
   // =========================================================================
-  // WORKFLOW 3: Employee Creation and Updates
+  // WORKFLOW 3: Employee Creation and Updates (with Bank Account Details)
   // =========================================================================
   console.log('\n--- 3. Employee Creation and Updates ---')
   const empNo = `E2E-EMP-${Date.now().toString().slice(-6)}`
@@ -205,10 +218,13 @@ async function runE2ESuite() {
       employmentType: 'Permanent',
       payBasis: 'Monthly',
       fundSource: 'F01',
+      bankAccountNumber: '0592104523',
+      bankName: 'LandBank',
     },
     adminToken,
   )
   assert(createEmp.status === 201 && createEmp.data?.id, '3. Employee', `Created employee ${empNo} with ₱65,000 monthly salary`)
+  assert(createEmp.data?.bankAccountNumber === '******4523', '3. Employee', 'Bank account number masked in employee creation response (******4523)')
   const employeeDbId = createEmp.data?.id
   const employeeName = createEmp.data?.name || 'Dr. Maria Test Santos'
 
@@ -238,6 +254,55 @@ async function runE2ESuite() {
 
   const getEmp = await api('GET', `/employees/${employeeDbId}`, null, adminToken)
   assert(getEmp.status === 200 && parseFloat(getEmp.data?.applicableRate) === 72000.0, '3. Employee', 'Employee details persisted accurately in PostgreSQL')
+  assert(getEmp.data?.bankAccountNumber === '******4523', '3. Employee', 'Complete bank account number never exposed in ordinary employee GET response')
+
+  // Employee without bank account
+  const noBankEmpNo = `E2E-NOBANK-${Date.now().toString().slice(-4)}`
+  const createNoBankEmp = await api(
+    'POST',
+    '/employees',
+    {
+      employeeId: noBankEmpNo,
+      name: 'Professor Without Bank Account',
+      office: 'College of Science',
+      position: 'Instructor I',
+      applicableRate: '35000',
+      classification: 'Faculty',
+      employmentType: 'Permanent',
+      payBasis: 'Monthly',
+      fundSource: 'F01',
+    },
+    adminToken,
+  )
+  assert(createNoBankEmp.status === 201 && !createNoBankEmp.data?.bankAccountNumber, '3. Employee', 'Employee without bank account created with undefined bank details')
+  const noBankEmpId = createNoBankEmp.data?.id
+
+  // Employee with incomplete/invalid bank account
+  const invalidBankEmpNo = `E2E-INVBANK-${Date.now().toString().slice(-4)}`
+  const createInvalidBankEmp = await api(
+    'POST',
+    '/employees',
+    {
+      employeeId: invalidBankEmpNo,
+      name: 'Instructor With Incomplete Bank Info',
+      office: 'College of Science',
+      position: 'Instructor I',
+      applicableRate: '30000',
+      classification: 'Faculty',
+      employmentType: 'Permanent',
+      payBasis: 'Monthly',
+      fundSource: 'F01',
+      bankAccountNumber: '12345',
+      bankName: 'LandBank',
+    },
+    adminToken,
+  )
+  assert(
+    createInvalidBankEmp.status === 201 && Boolean(createInvalidBankEmp.data?.bankAccountNumber?.includes('*')),
+    '3. Employee',
+    'Employee with incomplete bank details masked with asterisks',
+  )
+  const invalidBankEmpId = createInvalidBankEmp.data?.id
 
   // =========================================================================
   // WORKFLOW 4: Attendance Recording and Verification
@@ -280,7 +345,12 @@ async function runE2ESuite() {
     { resolution: 'Confirmed biometric logs match physical entry sheet' },
     adminToken,
   )
-  assert(concernRes.status === 200, '4. Attendance', 'Attendance concern resolved and remarks persisted (200)')
+  assert(
+    concernRes.status === 200,
+    '4. Attendance',
+    'Attendance concern resolved and remarks persisted (200)',
+    `Status: ${concernRes.status}, Body: ${JSON.stringify(concernRes.data)}`,
+  )
 
   // =========================================================================
   // WORKFLOW 5: Payroll Computation and Adjustments
@@ -400,26 +470,170 @@ async function runE2ESuite() {
   )
 
   // =========================================================================
-  // WORKFLOW 8: Payroll Locking and Unauthorized Modification Attempts
+  // WORKFLOW 8: Payroll Locking and Security Hardening (Phase A)
   // =========================================================================
-  console.log('\n--- 8. Payroll Locking ---')
-  const lockReq = await api('PUT', `/payroll/${payrollId}/lock`, {}, adminToken)
+  console.log('\n--- 8. Payroll Locking and Security Hardening ---')
+
+  // 8.1 Attempt to call the lock endpoint using an unauthorized role
+  const unauthLockReq = await api('PUT', `/payroll/${payrollId}/lock`, {}, empToken)
   assert(
-    lockReq.status === 200 && (lockReq.data?.record?.locked === true || lockReq.data?.locked === true),
+    unauthLockReq.status === 403,
     '8. Locking',
-    'Payroll successfully locked post-approval (locked = true)',
+    'Attempt to call lock endpoint using unauthorized role (Employee) rejected with 403 Forbidden',
   )
 
-  // Attempt modification on locked record
+  // 8.2 Attempt to lock payroll with incomplete approvals (only Stage 1 approved)
+  const incompleteLockReq = await api('PUT', `/payroll/${payrollId}/lock`, {}, adminToken)
+  assert(
+    incompleteLockReq.status === 400 &&
+    String(incompleteLockReq.data?.message || '').toLowerCase().includes('incomplete'),
+    '8. Locking',
+    'Attempt to lock payroll with incomplete approval stages rejected with 400 Bad Request',
+  )
+
+  // 8.3 Attempt to lock payroll without any approvals
+  const createNoApproval = await pool.query(
+    `INSERT INTO payroll (
+       employee_id, employee_name, department, cost_center, period, gross_pay, deductions, net_pay,
+       status, payroll_type_id, payroll_type_name, fund_source, pay_basis,
+       basic_pay, allowances, attendance_deductions, mandatory_deductions, other_deductions,
+       breakdown, locked, stage, ready_for_dv, computation_version, created_at, updated_at
+     ) VALUES (
+       $1, 'Test No Approvals', 'College of Science', 'College of Science', 'November 1-15, 2026', 30000, 5000, 25000,
+       'Draft', 'regular-monthly', 'Regular Monthly Faculty Payroll', 'F01', 'Monthly',
+       30000, 0, 0, 5000, 0,
+       '{}'::jsonb, FALSE, 'Draft', FALSE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+     ) RETURNING id`,
+    [employeeDbId],
+  )
+  const noApprovalId = createNoApproval.rows[0].id
+  const lockNoApprovals = await api('PUT', `/payroll/${noApprovalId}/lock`, {}, adminToken)
+  assert(
+    lockNoApprovals.status === 400 &&
+    String(lockNoApprovals.data?.message || '').toLowerCase().includes('no approval'),
+    '8. Locking',
+    'Attempt to lock payroll without any approval stages recorded rejected with 400 Bad Request',
+    `Status: ${lockNoApprovals.status}, Body: ${JSON.stringify(lockNoApprovals.data)}`,
+  )
+
+  // 8.4 Attempt to lock payroll with a returned approval
+  const createReturned = await pool.query(
+    `INSERT INTO payroll (
+       employee_id, employee_name, department, cost_center, period, gross_pay, deductions, net_pay,
+       status, payroll_type_id, payroll_type_name, fund_source, pay_basis,
+       basic_pay, allowances, attendance_deductions, mandatory_deductions, other_deductions,
+       breakdown, locked, stage, ready_for_dv, computation_version, created_at, updated_at
+     ) VALUES (
+       $1, 'Test Returned Payroll', 'College of Science', 'College of Science', 'November 1-15, 2026', 30000, 5000, 25000,
+       'Returned', 'regular-monthly', 'Regular Monthly Faculty Payroll', 'F01', 'Monthly',
+       30000, 0, 0, 5000, 0,
+       '{}'::jsonb, FALSE, 'Returned', FALSE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+     ) RETURNING id`,
+    [employeeDbId],
+  )
+  const returnedPayrollId = createReturned.rows[0].id
+  await pool.query(
+    `INSERT INTO approvals (payroll_id, stage, status, action, remarks, sequence, updated_at)
+     VALUES ($1, 'HR Office', 'Returned', 'Returned', 'Discrepancy in recorded leave', 2, CURRENT_TIMESTAMP)`,
+    [returnedPayrollId],
+  )
+  const lockReturned = await api('PUT', `/payroll/${returnedPayrollId}/lock`, {}, adminToken)
+  assert(
+    lockReturned.status === 400 &&
+    String(lockReturned.data?.message || '').toLowerCase().includes('returned'),
+    '8. Locking',
+    'Attempt to lock payroll with a returned approval stage rejected with 400 Bad Request',
+    `Status: ${lockReturned.status}, Body: ${JSON.stringify(lockReturned.data)}`,
+  )
+
+  // 8.5 Attempt to lock payroll with a rejected approval
+  const createRejected = await pool.query(
+    `INSERT INTO payroll (
+       employee_id, employee_name, department, cost_center, period, gross_pay, deductions, net_pay,
+       status, payroll_type_id, payroll_type_name, fund_source, pay_basis,
+       basic_pay, allowances, attendance_deductions, mandatory_deductions, other_deductions,
+       breakdown, locked, stage, ready_for_dv, computation_version, created_at, updated_at
+     ) VALUES (
+       $1, 'Test Rejected Payroll', 'College of Science', 'College of Science', 'November 1-15, 2026', 30000, 5000, 25000,
+       'Rejected', 'regular-monthly', 'Regular Monthly Faculty Payroll', 'F01', 'Monthly',
+       30000, 0, 0, 5000, 0,
+       '{}'::jsonb, FALSE, 'Office of the Chancellor', FALSE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+     ) RETURNING id`,
+    [employeeDbId],
+  )
+  const rejectedPayrollId = createRejected.rows[0].id
+  await pool.query(
+    `INSERT INTO approvals (payroll_id, stage, status, action, remarks, sequence, updated_at)
+     VALUES ($1, 'Office of the Chancellor', 'Rejected', 'Rejected', 'Budget ceiling exceeded', 5, CURRENT_TIMESTAMP)`,
+    [rejectedPayrollId],
+  )
+  const lockRejected = await api('PUT', `/payroll/${rejectedPayrollId}/lock`, {}, adminToken)
+  assert(
+    lockRejected.status === 400 &&
+    String(lockRejected.data?.message || '').toLowerCase().includes('rejected'),
+    '8. Locking',
+    'Attempt to lock payroll with a rejected approval stage rejected with 400 Bad Request',
+    `Status: ${lockRejected.status}, Body: ${JSON.stringify(lockRejected.data)}`,
+  )
+
+  // 8.6 Advance and approve all remaining stages for payrollId:
+  // Stage 1 was approved by Cost Center Signatory.
+  // Stage 2: HR Office
+  const appStage2 = await api(
+    'POST',
+    '/approvals/decision',
+    { payrollId, decision: 'Approved', remarks: 'HR verification and leave audit completed' },
+    hrToken,
+  )
+  assert(appStage2.status === 200, '8. Locking', 'Stage 2 (HR Office) approved')
+
+  // Stage 3: Accounting
+  const appStage3 = await api(
+    'POST',
+    '/approvals/decision',
+    { payrollId, decision: 'Approved', remarks: 'Accounting pre-audit and tax computation verified' },
+    adminToken,
+  )
+  assert(appStage3.status === 200, '8. Locking', 'Stage 3 (Accounting) approved')
+
+  // Stage 4: Budget Office
+  const appStage4 = await api(
+    'POST',
+    '/approvals/decision',
+    { payrollId, decision: 'Approved', remarks: 'Budget allocation and allotment obligation approved' },
+    adminToken,
+  )
+  assert(appStage4.status === 200, '8. Locking', 'Stage 4 (Budget Office) approved')
+
+  // Stage 5: Office of the Chancellor (Final stage)
+  const appStage5 = await api(
+    'POST',
+    '/approvals/decision',
+    { payrollId, decision: 'Approved', remarks: 'Final executive approval granted' },
+    adminToken,
+  )
+  assert(appStage5.status === 200, '8. Locking', 'Stage 5 (Office of the Chancellor) approved')
+
+  // 8.7 Successfully lock payroll after every required stage is approved
+  const lockReq = await api('PUT', `/payroll/${payrollId}/lock`, {}, adminToken)
+  assert(
+    lockReq.status === 200 &&
+    (lockReq.data?.record?.locked === true || lockReq.data?.locked === true) &&
+    (lockReq.data?.record?.readyForDv === true || lockReq.data?.readyForDv === true),
+    '8. Locking',
+    'Successfully lock payroll after every required stage is approved (locked = true, ready_for_dv = true)',
+  )
+
+  // 8.8 Attempt modification on locked record
   const modifyLocked = await api(
     'PUT',
     `/payroll/${payrollId}/recalculate`,
     { action: 'Tamper', reason: 'Attempt unauthorized modification', adjustments: 10000 },
     adminToken,
   )
-  assert(modifyLocked.status === 403, '8. Locking', 'Unauthorized modification of locked payroll rejected with 403 Forbidden')
+  assert(modifyLocked.status === 403, '8. Locking', 'Attempt to modify payroll after locking rejected with 403 Forbidden')
 
-  // Attempt duplicate approval on locked record
+  // 8.9 Attempt duplicate approval on locked record
   const reApproveLocked = await api(
     'POST',
     '/approvals/decision',
@@ -444,8 +658,11 @@ async function runE2ESuite() {
 
   // Download attachment
   const downloadRes = await api('GET', `/attachments/${attachmentId}/download`, null, adminToken)
-  assert(downloadRes.status === 200 && downloadRes.rawText?.includes('%PDF-1.4'), '9. Attachments', 'Downloaded attachment content matches uploaded file integrity')
-
+  assert(
+    downloadRes.status === 200 && Boolean(downloadRes.rawText?.includes('%PDF-1.4')),
+    '9. Attachments',
+    'Downloaded attachment content matches uploaded file integrity',
+  )
   // Non-existent attachment
   const badDownload = await api('GET', `/attachments/999999/download`, null, adminToken)
   assert(badDownload.status === 404, '9. Attachments', 'Non-existent attachment download returns 404 Not Found')
@@ -470,14 +687,125 @@ async function runE2ESuite() {
     'Generated Disbursement Voucher (DV) with prerequisites satisfied',
   )
 
-  // 10.3 LandBank Export File
-  const lbExport = await api('GET', `/disbursement/landbank/${payrollId}`, null, adminToken)
+  // 10.3 LandBank Export File — Cashier Download and Processing
+  const lbExport = await api('GET', `/disbursement/landbank/${payrollId}`, null, cashierToken)
   assert(
     lbExport.status === 200 &&
-      lbExport.data?.content?.includes('H|MSUN-001') &&
-      lbExport.data?.content?.includes('T|'),
+    lbExport.data?.records?.length === 1 &&
+    lbExport.data?.records[0]?.accountNumber === '0592104523' &&
+    lbExport.data?.records[0]?.accountNumber !== '1234567890' &&
+    lbExport.data?.missingAccountsCount === 0 &&
+    lbExport.data?.content?.includes('H|MSUN-001') &&
+    lbExport.data?.content?.includes('D|1|0592104523|') &&
+    lbExport.data?.content?.includes('T|1|'),
     '10. Documents',
-    'Generated compliant LandBank electronic batch text file (Header/Detail/Trailer)',
+    'Generated compliant LandBank batch text file with verified employee account (no dummy numbers)',
+  )
+
+  // 10.3.1 Cashier Download Audit Trail
+  const lbAuditCheck = await pool.query(
+    `SELECT *
+     FROM audit_logs
+     WHERE action LIKE '%LandBank electronic disbursement file%'
+       AND user_id = $1
+     ORDER BY log_id DESC
+     LIMIT 1`,
+    [cashierUserId],
+  )
+  assert(
+    lbAuditCheck.rows.length === 1 &&
+    lbAuditCheck.rows[0].details?.payrollId === payrollId &&
+    !JSON.stringify(lbAuditCheck.rows[0].details).includes('0592104523'),
+    '10. Documents',
+    'Cashier download logged in audit trail without exposing sensitive bank credentials',
+  )
+
+  // 10.3.2 Reconciliation Policy & Total Matching
+  assert(
+    lbExport.data?.reconciliation?.isReconciled === true &&
+    lbExport.data?.reconciliation?.totalApprovedPayrollAmount === lbExport.data?.reconciliation?.bankDisbursementAmount &&
+    lbExport.data?.reconciliation?.manualDisbursementAmount === 0,
+    '10. Documents',
+    'Disbursement reconciliation verified: bank transfer matches approved payroll amount',
+  )
+
+  // 10.3.3 Role-based access guard on LandBank export
+  const unauthLbEmp = await api('GET', `/disbursement/landbank/${payrollId}`, null, empToken)
+  assert(unauthLbEmp.status === 403, '10. Documents', 'Employee role denied from LandBank export (403 Forbidden)')
+  const unauthLbHr = await api('GET', `/disbursement/landbank/${payrollId}`, null, hrToken)
+  assert(unauthLbHr.status === 403, '10. Documents', 'HR Office role denied from LandBank export (403 Forbidden)')
+
+  // 10.3.4 Employee WITHOUT bank account excluded from LandBank upload
+  const createNoBankPayroll = await api(
+    'POST',
+    '/payroll',
+    {
+      employeeId: noBankEmpId,
+      employeeName: 'Professor Without Bank Account',
+      department: 'College of Science',
+      period: 'November 1-15, 2026',
+      payrollTypeId: 'regular-monthly',
+      payrollTypeName: 'Regular Monthly Faculty Payroll',
+      fundSource: 'F01',
+      payBasis: 'Monthly',
+      daysWorked: 22,
+      absences: 0,
+      adjustments: 0,
+    },
+    adminToken,
+  )
+  const noBankPayrollId = createNoBankPayroll.data?.id
+  const noBankLb = await api('GET', `/disbursement/landbank/${noBankPayrollId}`, null, cashierToken)
+  assert(
+    noBankLb.status === 200 &&
+    noBankLb.data?.records?.length === 0 &&
+    noBankLb.data?.missingAccountsCount === 1 &&
+    noBankLb.data?.manualDisbursementEmployees?.length === 1 &&
+    noBankLb.data?.manualDisbursementEmployees[0]?.reason === 'No bank account on record' &&
+    noBankLb.data?.manualDisbursementAmount > 0 &&
+    noBankLb.data?.totalAmount === 0 &&
+    noBankLb.data?.content?.includes('H|MSUN-001|') &&
+    noBankLb.data?.content?.includes('T|0|0.00'),
+    '10. Documents',
+    'Employee without bank account excluded from LandBank upload and flagged for manual disbursement',
+  )
+  assert(
+    noBankLb.data?.reconciliation?.isReconciled === true &&
+    noBankLb.data?.reconciliation?.bankDisbursementAmount === 0 &&
+    noBankLb.data?.reconciliation?.manualDisbursementAmount === noBankLb.data?.reconciliation?.totalApprovedPayrollAmount,
+    '10. Documents',
+    'Reconciliation verified: 100% manual disbursement reconciles with approved payroll total',
+  )
+
+  // 10.3.5 Employee with incomplete/invalid bank account excluded (no dummy number generated)
+  const createInvBankPayroll = await api(
+    'POST',
+    '/payroll',
+    {
+      employeeId: invalidBankEmpId,
+      employeeName: 'Instructor With Incomplete Bank Info',
+      department: 'College of Science',
+      period: 'November 1-15, 2026',
+      payrollTypeId: 'regular-monthly',
+      payrollTypeName: 'Regular Monthly Faculty Payroll',
+      fundSource: 'F01',
+      payBasis: 'Monthly',
+      daysWorked: 22,
+      absences: 0,
+      adjustments: 0,
+    },
+    adminToken,
+  )
+  const invBankPayrollId = createInvBankPayroll.data?.id
+  const invBankLb = await api('GET', `/disbursement/landbank/${invBankPayrollId}`, null, cashierToken)
+  assert(
+    invBankLb.status === 200 &&
+    invBankLb.data?.records?.length === 0 &&
+    invBankLb.data?.missingAccountsCount === 1 &&
+    invBankLb.data?.manualDisbursementEmployees[0]?.reason?.toLowerCase().includes('incomplete') &&
+    invBankLb.data?.reconciliation?.isReconciled === true,
+    '10. Documents',
+    'Employee with incomplete bank info excluded from LandBank file and no dummy account generated',
   )
 
   // 10.4 Statutory Deduction Report
@@ -492,8 +820,8 @@ async function runE2ESuite() {
   const payRegister = await api('GET', '/payslips/reports/register', null, adminToken)
   assert(
     payRegister.status === 200 &&
-      payRegister.data?.institution === 'Mindanao State University at Naawan' &&
-      Array.isArray(payRegister.data?.records),
+    payRegister.data?.institution === 'Mindanao State University at Naawan' &&
+    Array.isArray(payRegister.data?.records),
     '10. Documents',
     'Generated official Payroll Register report with grand totals and institution header',
   )
