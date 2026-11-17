@@ -11,12 +11,18 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const { body, headers, ...rest } = options
 
+  const token = typeof window !== 'undefined' ? localStorage.getItem('msu_token') : null
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
+
+  const requestHeaders: Record<string, string> = {
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...((headers as Record<string, string>) || {}),
+  }
+
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers: requestHeaders,
+    body: isFormData ? (body as BodyInit) : (body !== undefined ? JSON.stringify(body) : undefined),
     ...rest,
   })
 
@@ -40,6 +46,8 @@ export const apiClient = {
     apiRequest<T>(endpoint, { ...options, method: 'POST', body }),
   put: <T>(endpoint: string, body?: unknown, options?: RequestOptions) =>
     apiRequest<T>(endpoint, { ...options, method: 'PUT', body }),
+  patch: <T>(endpoint: string, body?: unknown, options?: RequestOptions) =>
+    apiRequest<T>(endpoint, { ...options, method: 'PATCH', body }),
   delete: <T>(endpoint: string, options?: RequestOptions) =>
     apiRequest<T>(endpoint, { ...options, method: 'DELETE' }),
 }

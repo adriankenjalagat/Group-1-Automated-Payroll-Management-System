@@ -1,27 +1,53 @@
 import { useState, type FormEvent } from 'react'
-import { Button, PasswordField, PasswordRules, StatusMark, passwordRules } from '../MsuPayroll'
+import { Alert, Button, PasswordField, PasswordRules, StatusMark, passwordRules } from '../MsuPayroll'
 import { ViewHeader } from './AuthShell'
 import { users } from './mockData'
+import { authApi } from '../api/auth'
 
-function PasswordSetForm({ cta, onDone }: { cta: string; onDone: () => void }) {
+function PasswordSetForm({
+  cta,
+  token,
+  onDone,
+}: {
+  cta: string
+  token?: string
+  onDone: () => void
+}) {
   const [pw, setPw] = useState('')
   const [confirm, setConfirm] = useState('')
   const [touched, setTouched] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [apiError, setApiError] = useState('')
   const rulesOk = passwordRules.every((r) => r.test(pw))
   const matches = pw === confirm
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     setTouched(true)
+    setApiError('')
     if (!rulesOk || !matches || !confirm) return
     setLoading(true)
-    await new Promise((r) => setTimeout(r, 900))
-    onDone()
+    try {
+      if (token) {
+        await authApi.resetPassword(token, pw)
+      } else {
+        await new Promise((r) => setTimeout(r, 600))
+      }
+      setLoading(false)
+      onDone()
+    } catch (err: any) {
+      setLoading(false)
+      setApiError(err.message || 'Failed to update password. Please request a new reset link.')
+    }
   }
 
   return (
     <form onSubmit={submit} noValidate className="grid gap-4">
+      {apiError && (
+        <Alert tone="danger" title="Unable to set password">
+          {apiError}
+        </Alert>
+      )}
       <PasswordField label="New password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
       <PasswordRules value={pw} />
       <PasswordField
@@ -62,11 +88,11 @@ export function ActivateAccount({ onDone }: { onDone: () => void }) {
   )
 }
 
-export function SetNewPassword({ onDone }: { onDone: () => void }) {
+export function SetNewPassword({ token, onDone }: { token?: string; onDone: () => void }) {
   return (
     <>
       <ViewHeader title="Set a new password" subtitle="Choose a password you have not used on this system before." />
-      <PasswordSetForm cta="Save new password" onDone={onDone} />
+      <PasswordSetForm token={token} cta="Save new password" onDone={onDone} />
     </>
   )
 }

@@ -60,6 +60,7 @@ export function AuthFlow() {
   const [initial] = useState(getInitialAuth)
   const [view, setView] = useState<View>(initial.view)
   const [identifier, setIdentifier] = useState("")
+  const [resetToken, setResetToken] = useState("")
   const [user, setUser] = useState<MockUser | null>(initial.user)
   const [role, setRole] = useState<Role>(initial.role)
 
@@ -111,8 +112,9 @@ export function AuthFlow() {
         {view === "forgot" && (
           <ForgotPassword
             onBack={toSignIn}
-            onSent={(id) => {
+            onSent={(id, token) => {
               setIdentifier(id)
+              if (token) setResetToken(token)
               setView("recoverySent")
             }}
           />
@@ -122,6 +124,7 @@ export function AuthFlow() {
             identifier={identifier}
             onBack={toSignIn}
             onAdmin={() => setView("adminRecovery")}
+            onOpenLink={() => setView("setPassword")}
           />
         )}
         {view === "adminRecovery" && (
@@ -156,7 +159,8 @@ export function AuthFlow() {
         )}
         {view === "setPassword" && (
           <SetNewPassword
-            onDone={() => setView("activationSuccess")}
+            token={resetToken}
+            onDone={() => setView("resetSuccess")}
           />
         )}
         {view === "resetUnavailable" && (

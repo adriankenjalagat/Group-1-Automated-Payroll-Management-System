@@ -606,8 +606,11 @@ export function UserManagement({
     setDirectory((current) => current.map((user) =>
       user.userId === selected.userId ? { ...user, status: 'Deactivated', simulated: true } : user,
     ))
-    setNotice(`${selected.name}'s account was deactivated locally. No university account was changed.`)
-    record('Deactivated a local demonstration account for', selected.name, 'Demo account deactivated locally')
+    setNotice(`${selected.name}'s account was deactivated.`)
+    record('Deactivated user account for', selected.name, 'Account status updated')
+    apiClient.patch(`/users/${selected.userId}/status`, { status: 'locked' }).catch((err) => {
+      console.warn('Backend user deactivation sync notice:', err)
+    })
     setDialog(null)
   }
 

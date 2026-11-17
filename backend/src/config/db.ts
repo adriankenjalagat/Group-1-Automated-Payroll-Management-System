@@ -1,4 +1,10 @@
+import dotenv from 'dotenv'
+import path from 'path'
 import { Pool, type QueryResult, type QueryResultRow } from 'pg'
+
+// Ensure .env is loaded whether running from backend directory or project root
+dotenv.config({ path: path.resolve(__dirname, '../../.env') })
+dotenv.config()
 
 export interface DatabaseConfig {
   host: string

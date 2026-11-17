@@ -3,3 +3,6 @@ dist
 uploads
 .env
 *.log
+
+.env.*
+!.env.example

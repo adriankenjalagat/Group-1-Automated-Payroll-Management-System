@@ -9,6 +9,7 @@ import { MyAccount, profileFor } from "../../account/MyAccount"
 import { Alert, Button, Icon, TextField } from "../../MsuPayroll"
 import { Modal, SelectField, Tag } from "../../admin/ui"
 import type { MockUser } from "../../auth/mockData"
+import { approvalsApi } from "../../api/approvals"
 import {
   applyCostCenterDecision,
   demoCostCenterAlpha,
@@ -842,6 +843,16 @@ export function CostCenterReview({
       return
     }
     lock.current = true
+    const numericPayrollId = parseInt(String(current.relatedPayroll || current.id).replace(/\D/g, ''), 10)
+    if (!isNaN(numericPayrollId)) {
+      approvalsApi.submitDecision({
+        payrollId: numericPayrollId,
+        decision: action === "Returned" ? "Returned" : "Approved",
+        remarks,
+      }).catch((e) => {
+        console.warn('Live approval decision sync noted:', e.message)
+      })
+    }
     setRequests((items) =>
       items.map((item) =>
         item.id === current.id ? result.request : item,

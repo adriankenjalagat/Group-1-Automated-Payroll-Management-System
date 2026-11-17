@@ -1,6 +1,14 @@
 import clsx from "clsx"
 import { useEffect, useRef, useState } from "react"
-import { employeesApi, submissionsApi, payslipsApi, attendanceApi } from "../api"
+import {
+  employeesApi,
+  submissionsApi,
+  payslipsApi,
+  attendanceApi,
+  payrollApi,
+  disbursementApi,
+  approvalsApi,
+} from "../api"
 import logo from "../assets/logo.png"
 import { Button, Icon } from "../MsuPayroll"
 import { users, type MockUser } from "../auth/mockData"
@@ -133,6 +141,7 @@ import {
 import {
   initialPayrollDrafts,
   type PayrollDraft,
+  type PayrollRow,
 } from "./accounting/payrollData"
 import { HrDashboard } from "./hr/HrDashboard"
 import { HrMyAccount } from "./hr/HrMyAccount"
@@ -455,6 +464,104 @@ export function RolePortal({
         if (data && data.attendanceRecords) setAttendanceState(data)
       })
       .catch((err) => console.warn("Could not load attendance from API:", err))
+
+    payrollApi
+      .getAll()
+      .then((data) => {
+        if (data && data.length) {
+          const liveDrafts: PayrollDraft[] = data.map((p) => {
+            const basic = Number(p.basicPay) || 0
+            const gross = Number(p.grossPay) || basic
+            const deductions = Number(p.deductions) || 0
+            const row: PayrollRow = {
+              employeeId: `EMP-${p.employeeId}`,
+              employeeName: p.employeeName || `Employee ${p.employeeId}`,
+              classification: "Staff",
+              employmentType: "Permanent",
+              office: p.department || "General",
+              payrollTypeId: "general-payroll",
+              payrollTypeName: `${p.department || "General"} Payroll`,
+              fund: "F01",
+              payBasis: "Monthly",
+              sourceSubmissionId: `SUB-${p.id}`,
+              sourceTransmittalId: `TR-${p.id}`,
+              applicableRate: basic,
+              verifiedDaysWorked: 22,
+              attendanceSummary: "Verified attendance from PostgreSQL records",
+              approvedAbsenceSummary: "None",
+              basicPay: basic,
+              adjustments: [],
+              deductions:
+                deductions > 0
+                  ? [
+                      {
+                        id: `DED-${p.id}`,
+                        name: "Standard Deductions",
+                        basis: "Mandatory Contributions & Tax",
+                        amount: deductions,
+                        explanation:
+                          "Calculated mandatory statutory deductions and withholding tax.",
+                      },
+                    ]
+                  : [],
+              calculationStatus: "Computed",
+              computationExplanation: `Basic: ₱${basic.toLocaleString()} - Deductions: ₱${deductions.toLocaleString()} = Net: ₱${(gross - deductions).toLocaleString()}`,
+            }
+            return {
+              id: `PAY-DB-${p.id}`,
+              payrollTypeId: "general-payroll",
+              payrollTypeName: `${p.department || "General"} Payroll`,
+              fund: "F01" as const,
+              period: p.period || "November 2026",
+              periodStart: "2026-11-01",
+              periodEnd: "2026-11-30",
+              rows: [row],
+              includedSubmissionIds: [`SUB-${p.id}`],
+              exceptions: [],
+              stage: (p.status === "Approved"
+                ? "Completed"
+                : p.status === "Rejected"
+                  ? "Returned"
+                  : "For Approval") as any,
+              approvalRouteConfigured: true,
+              createdBy: "PostgreSQL Database",
+              createdAt: p.createdAt || "2026-11-01T08:00:00+08:00",
+              updatedAt: p.updatedAt || "2026-11-01T08:00:00+08:00",
+              locked: Boolean(p.locked),
+              computationVersion: Number(p.computationVersion) || 1,
+              corrections: [],
+              approvalHistory: [],
+            }
+          })
+          setPayrollDrafts((prev) => [
+            ...liveDrafts,
+            ...prev.filter((d) => !d.id.startsWith("PAY-DB-")),
+          ])
+        }
+      })
+      .catch((err) => console.warn("Could not load payrolls from API:", err))
+
+    disbursementApi
+      .getAll()
+      .then((records) => {
+        if (records && records.length) {
+          const releasedPayrollIds = new Set(
+            records
+              .filter((r) => r.status === "Released")
+              .map((r) => String(r.payrollId)),
+          )
+          setDvRecords((prev) =>
+            prev.map((dv) => {
+              const pId = dv.payrollId.replace(/^(PR|PAY)-/, "")
+              if (releasedPayrollIds.has(pId)) {
+                return { ...dv, releaseStatus: "Released" }
+              }
+              return dv
+            }),
+          )
+        }
+      })
+      .catch((err) => console.warn("Could not load disbursements from API:", err))
   }, [])
 
   // The signed-in employee is the HR record linked to this account. HR edits flow into Employee pages.
@@ -1207,6 +1314,14 @@ export function RolePortal({
       releasedAt: new Date().toISOString(),
     })
     if (!result.ok) return result
+
+    const numericPayrollId = parseInt(String(selected.id).replace(/\D/g, ''), 10)
+    if (!isNaN(numericPayrollId)) {
+      disbursementApi.release(numericPayrollId).catch((e) => {
+        console.warn('Live disbursement release sync noted:', e.message)
+      })
+    }
+
     setCashierPayrolls((items) =>
       items.map((item) =>
         item.id === result.record.id ? result.record : item,

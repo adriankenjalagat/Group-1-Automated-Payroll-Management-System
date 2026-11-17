@@ -8,6 +8,8 @@ export interface AuditRecord {
   username: string
   name: string
   role: string
+  details?: Record<string, unknown> | null
+  ipAddress?: string | null
 }
 
 export const auditService = {
@@ -19,11 +21,13 @@ export const auditService = {
            a.user_id,
            a.action,
            a.logged_at,
+           a.details,
+           a.ip_address,
            COALESCE(u.username, 'system') AS username,
            COALESCE(u.name, u.username, 'System Administrator') AS name,
-           COALESCE(u.role, 'System Administrator') AS role
+           COALESCE(u.roles[1], 'System Administrator') AS role
          FROM audit_logs a
-         LEFT JOIN users u ON a.user_id = u.user_id
+         LEFT JOIN users u ON a.user_id = u.id
          ORDER BY a.logged_at DESC, a.log_id DESC`,
       )
       return res.rows.map((row: any) => ({
@@ -34,6 +38,8 @@ export const auditService = {
         username: row.username,
         name: row.name,
         role: row.role,
+        details: row.details,
+        ipAddress: row.ip_address,
       }))
     } catch (err) {
       console.warn('[DB auditService] findAll error:', err)
@@ -41,15 +47,20 @@ export const auditService = {
     }
   },
 
-  async logAction(userId: number | null, action: string): Promise<void> {
+  async logAction(
+    userId: number | null,
+    action: string,
+    details?: Record<string, unknown> | null,
+    ipAddress?: string | null,
+  ): Promise<void> {
     try {
       await pool.query(
-        `INSERT INTO audit_logs (user_id, action, logged_at) VALUES ($1, $2, CURRENT_TIMESTAMP)`,
-        [userId, action],
+        `INSERT INTO audit_logs (user_id, action, details, ip_address, logged_at) 
+         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)`,
+        [userId, action, details ? JSON.stringify(details) : null, ipAddress || null],
       )
     } catch (err) {
       console.warn('[DB auditService] logAction error:', err)
     }
   },
 }
-

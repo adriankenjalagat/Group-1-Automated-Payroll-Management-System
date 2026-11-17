@@ -23,4 +23,13 @@ export const submissionsApi = {
   update: (id: string, updateData: Partial<Submission | VerificationSubmission>): Promise<Submission> => {
     return apiClient.put<Submission>(`/attachments/${id}`, updateData)
   },
+
+  uploadFile: (formData: FormData): Promise<{ id: number; filename: string; originalName: string; mimeType: string }> => {
+    return apiClient.post('/attachments/upload', formData)
+  },
+
+  downloadFileUrl: (id: string | number): string => {
+    const base = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
+    return `${base}/attachments/${id}/download`
+  },
 }
