@@ -24,13 +24,21 @@ export const dbConfig: DatabaseConfig = {
   maxPoolSize: Number(process.env.DB_MAX_POOL) || 10,
 }
 
+const isInternalNetwork = Boolean(
+  process.env.DATABASE_URL &&
+    (process.env.DATABASE_URL.includes('railway.internal') ||
+      process.env.DATABASE_URL.includes('localhost') ||
+      process.env.DATABASE_URL.includes('127.0.0.1')),
+)
+
 const isCloudDb = Boolean(
   process.env.DATABASE_URL &&
-    (process.env.NODE_ENV === 'production' ||
-      process.env.DATABASE_URL.includes('rlwy.net') ||
-      process.env.DATABASE_URL.includes('railway') ||
+    !isInternalNetwork &&
+    (process.env.DATABASE_URL.includes('rlwy.net') ||
       process.env.DATABASE_URL.includes('render') ||
-      process.env.DATABASE_URL.includes('supabase')),
+      process.env.DATABASE_URL.includes('supabase') ||
+      process.env.DATABASE_URL.includes('neon.tech') ||
+      process.env.DATABASE_URL.includes('sslmode=require')),
 )
 
 export const pool = process.env.DATABASE_URL
