@@ -59,9 +59,7 @@ export const usersController = {
         return
       }
 
-      // If password is not provided in demo body, use username as fallback if acceptable, or enforce password
-      // Note: for safety, enforce minimum 8 chars
-      const pwd = password || (username.length >= 8 ? username : `${username}#2026`)
+      const pwd = password || username
 
       const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null
       const created = await usersService.create(
