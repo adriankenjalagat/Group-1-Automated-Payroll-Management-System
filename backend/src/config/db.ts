@@ -16,22 +16,37 @@ export interface DatabaseConfig {
 }
 
 export const dbConfig: DatabaseConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT) || 5432,
-  database: process.env.DB_NAME || 'Automated-Payroll-Management-System',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
+  host: process.env.DB_HOST || process.env.PGHOST || 'localhost',
+  port: Number(process.env.DB_PORT || process.env.PGPORT) || 5432,
+  database: process.env.DB_NAME || process.env.PGDATABASE || 'Automated-Payroll-Management-System',
+  user: process.env.DB_USER || process.env.PGUSER || 'postgres',
+  password: process.env.DB_PASSWORD || process.env.PGPASSWORD || 'postgres',
   maxPoolSize: Number(process.env.DB_MAX_POOL) || 10,
 }
 
-export const pool = new Pool({
-  host: dbConfig.host,
-  port: dbConfig.port,
-  database: dbConfig.database,
-  user: dbConfig.user,
-  password: dbConfig.password,
-  max: dbConfig.maxPoolSize,
-})
+const isCloudDb = Boolean(
+  process.env.DATABASE_URL &&
+    (process.env.NODE_ENV === 'production' ||
+      process.env.DATABASE_URL.includes('rlwy.net') ||
+      process.env.DATABASE_URL.includes('railway') ||
+      process.env.DATABASE_URL.includes('render') ||
+      process.env.DATABASE_URL.includes('supabase')),
+)
+
+export const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: isCloudDb ? { rejectUnauthorized: false } : undefined,
+      max: dbConfig.maxPoolSize,
+    })
+  : new Pool({
+      host: dbConfig.host,
+      port: dbConfig.port,
+      database: dbConfig.database,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      max: dbConfig.maxPoolSize,
+    })
 
 export async function query<T extends QueryResultRow = any>(
   text: string,
