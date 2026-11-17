@@ -403,10 +403,20 @@ function readSqlFile(filename: string, fallback: string): string {
 }
 
 export async function runMigrations(): Promise<void> {
+<<<<<<< HEAD
+=======
+  const migrationFiles = [
+    'schema.sql',
+    'migration.sql',
+    'migration_phase2.sql',
+    'migration_phase_b.sql',
+  ]
+>>>>>>> 837f00f (fixing bugs)
   const client = await pool.connect()
 
   try {
     await client.query('BEGIN')
+<<<<<<< HEAD
 
     // 1. Run schema and all migration files in order FIRST to ensure all tables exist
     console.log('[Migration] Applying schema.sql...')
@@ -506,6 +516,19 @@ export async function runMigrations(): Promise<void> {
       `)
 
       console.log(`[Migration] Seeded ${DEFAULT_SEED_USERS.length} accounts successfully.`)
+=======
+    for (const filename of migrationFiles) {
+      const compiledPath = path.resolve(__dirname, filename)
+      const sourcePath = path.resolve(__dirname, '../../src/config', filename)
+      const filePath = fs.existsSync(compiledPath) ? compiledPath : sourcePath
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`Migration file not found: ${filename}`)
+      }
+
+      console.log(`[Migration] Running ${filename}...`)
+      const sql = fs.readFileSync(filePath, 'utf8')
+      await client.query(sql)
+>>>>>>> 837f00f (fixing bugs)
     }
 
     await client.query('COMMIT')

@@ -101,19 +101,13 @@ cd ..
 
 ---
 
-### Step 4: Database Setup (Optional)
+### Step 4: Database Setup
 
-> **Note**: The backend is designed with a resilient fallback system. If PostgreSQL is not connected or configured yet, the backend will safely use mock in-memory data so the frontend can function immediately without crashing.
-
-To set up the full PostgreSQL database:
-1. Open pgAdmin or `psql`.
-2. Create a new database named:
+The backend requires a PostgreSQL database. Open pgAdmin or `psql` and create the database named in `backend/.env` (the default is):
    ```sql
    CREATE DATABASE "Automated-Payroll-Management-System";
    ```
-3. Execute the schema script located at:
-   `backend/src/config/schema.sql`
-4. Update `DB_USER` and `DB_PASSWORD` in `backend/.env` to match your local PostgreSQL credentials.
+Update `DB_USER` and `DB_PASSWORD` in `backend/.env` to match your local PostgreSQL credentials. When the backend starts, it creates the base tables and applies the migrations automatically.
 
 ---
 
