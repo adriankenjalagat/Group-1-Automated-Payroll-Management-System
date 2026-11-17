@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "seed": "tsx scripts/seed_canonical_users.ts",
     "start": "node dist/server.js",
     "test:smoke": "tsx scripts/live_smoke.ts",
     "test:e2e": "tsx scripts/e2e_workflow_tests.ts"
