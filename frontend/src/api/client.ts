@@ -1,4 +1,16 @@
-const rawBaseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3000/api').trim()
+let rawBaseUrl = (
+  import.meta.env.VITE_API_URL ||
+  'https://group-1-automated-payroll-management-system-production-a144f8b1.up.railway.app/api'
+).trim()
+
+if (rawBaseUrl && !rawBaseUrl.startsWith('http://') && !rawBaseUrl.startsWith('https://')) {
+  rawBaseUrl = `https://${rawBaseUrl}`
+}
+
+if (!rawBaseUrl.endsWith('/api') && !rawBaseUrl.includes('/api/')) {
+  rawBaseUrl = `${rawBaseUrl}/api`
+}
+
 const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '')
 
 interface RequestOptions extends Omit<RequestInit, 'body'> {
@@ -52,4 +64,3 @@ export const apiClient = {
   delete: <T>(endpoint: string, options?: RequestOptions) =>
     apiRequest<T>(endpoint, { ...options, method: 'DELETE' }),
 }
-
