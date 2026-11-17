@@ -66,9 +66,13 @@ export async function query<T extends QueryResultRow = any>(
 export async function connectDatabase(): Promise<void> {
   try {
     const client = await pool.connect()
-    console.log(
-      `[DB] Successfully connected to PostgreSQL database: "${dbConfig.database}" on ${dbConfig.host}:${dbConfig.port}`,
-    )
+    if (process.env.DATABASE_URL) {
+      console.log(`[DB] Successfully connected to PostgreSQL via DATABASE_URL`)
+    } else {
+      console.log(
+        `[DB] Successfully connected to PostgreSQL database: "${dbConfig.database}" on ${dbConfig.host}:${dbConfig.port}`,
+      )
+    }
     client.release()
   } catch (error) {
     console.warn(

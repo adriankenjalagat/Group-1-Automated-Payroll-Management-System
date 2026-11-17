@@ -5,7 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy_sql.js",
     "seed": "tsx scripts/seed_canonical_users.ts",
     "start": "node dist/server.js",
     "test:smoke": "tsx scripts/live_smoke.ts",
