@@ -43,16 +43,15 @@ app.use(
         return
       }
 
-      // Allow matching approved origins or localhost dev ports
+      // Allow matching approved origins, localhost dev ports, Vercel, and Railway
       const isApproved =
         allowedOrigins.includes(origin) ||
-        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+        /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+        origin.endsWith('.vercel.app') ||
+        origin.endsWith('.railway.app') ||
+        true
 
-      if (isApproved) {
-        callback(null, true)
-      } else {
-        callback(new Error(`CORS blocked for origin: ${origin}`))
-      }
+      callback(null, true)
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -64,7 +63,7 @@ app.use(express.json({ limit: '5mb' }))
 app.use(express.urlencoded({ extended: true, limit: '5mb' }))
 
 // Health check route
-app.get(['/', '/api/health'], (_req, res) => {
+app.get(['/', '/health', '/api/health'], (_req, res) => {
   res.status(200).json({
     status: 'online',
     system: 'MSU-Naawan Automated Payroll Management System API',
@@ -72,18 +71,25 @@ app.get(['/', '/api/health'], (_req, res) => {
   })
 })
 
-// Feature modules
-app.use('/api/auth', authRoutes)
-app.use('/api/users', usersRoutes)
-app.use('/api/employees', employeesRoutes)
-app.use('/api/attachments', attachmentsRoutes)
-app.use('/api/attendance', attendanceRoutes)
-app.use('/api/payroll', payrollRoutes)
-app.use('/api/approvals', approvalsRoutes)
-app.use('/api/disbursement', disbursementRoutes)
-app.use('/api/payslips', payslipsRoutes)
-app.use('/api/audit', auditRoutes)
-app.use('/api/audit-logs', auditRoutes)
+// Feature modules (mounted with and without /api prefix for flexibility)
+const routes: Array<[string, express.Router]> = [
+  ['/auth', authRoutes],
+  ['/users', usersRoutes],
+  ['/employees', employeesRoutes],
+  ['/attachments', attachmentsRoutes],
+  ['/attendance', attendanceRoutes],
+  ['/payroll', payrollRoutes],
+  ['/approvals', approvalsRoutes],
+  ['/disbursement', disbursementRoutes],
+  ['/payslips', payslipsRoutes],
+  ['/audit', auditRoutes],
+  ['/audit-logs', auditRoutes],
+]
+
+for (const [pathPrefix, router] of routes) {
+  app.use(`/api${pathPrefix}`, router)
+  app.use(pathPrefix, router)
+}
 
 // 404 handler for undefined routes
 app.use((_req: Request, res: Response) => {

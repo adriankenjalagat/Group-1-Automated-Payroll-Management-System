@@ -1,5 +1,5 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
+const rawBaseUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3000/api').trim()
+const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '')
 
 interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
@@ -20,7 +20,8 @@ export async function apiRequest<T>(
     ...((headers as Record<string, string>) || {}),
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
+  const response = await fetch(`${API_BASE_URL}${cleanEndpoint}`, {
     headers: requestHeaders,
     body: isFormData ? (body as BodyInit) : (body !== undefined ? JSON.stringify(body) : undefined),
     ...rest,
