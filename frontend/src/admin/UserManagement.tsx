@@ -429,8 +429,12 @@ function UserEditor({
               Non-employee administrative roles may remain unlinked. No employee appointment record will be created from this form.
             </p>
           )}
-          <Alert tone="info" title="Frontend prototype only">
-            Saving changes updates local demonstration state. No university account, credentials, invitation, or backend record is created.
+          <Alert tone="info" title="Automatic Account Credentials">
+            Account will be created in the database. Default login credentials:
+            <br />
+            <strong>Username / Email:</strong> {draft.username || 'firstname.lastname'}
+            <br />
+            <strong>Password:</strong> {draft.username || 'firstname.lastname'}
           </Alert>
           <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
             <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
@@ -545,35 +549,42 @@ export function UserManagement({
   }
   const selected = dialog && 'userId' in dialog ? directory.find((user) => user.userId === dialog.userId) : undefined
 
-  const saveUser = (draft: Draft) => {
+  const saveUser = async (draft: Draft) => {
     if (dialog?.kind === 'add') {
       const cleanUser = draft.username.replace(/^@/, '').trim().toLowerCase()
-      const nextNumber = directory.reduce((max, user) => Math.max(max, Number(user.userId.split('U')[1]) || 0), 0) + 1
-      const created: DirectoryUser = {
-        userId: `DEMO-U${String(nextNumber).padStart(3, '0')}`,
-        name: draft.name.trim(),
-        username: cleanUser,
-        role: draft.role as SystemRole,
-        status: 'Active',
-        employeeId: draft.employeeId || null,
-        simulated: true,
-      }
-      setDirectory((current) => [created, ...current])
-      setNotice(`User account created. Login credentials: username "${cleanUser}", password "${cleanUser}".`)
-      record('Created user account for', created.name, 'User created with credentials')
+      setNotice('Saving user account to PostgreSQL database...')
 
-      // Sync new user to backend PostgreSQL database
-      apiClient.post('/users', {
-        name: draft.name.trim(),
-        username: cleanUser,
-        role: draft.role,
-        employeeId: draft.employeeId || null,
-        password: cleanUser,
-      }).then(() => {
-        if (onRefresh) onRefresh()
-      }).catch((err) => {
-        console.warn('Backend user creation notice:', err)
-      })
+      try {
+        const res = await apiClient.post<any>('/users', {
+          name: draft.name.trim(),
+          username: cleanUser,
+          email: `${cleanUser}@msunaawan.example`,
+          role: draft.role,
+          employeeId: draft.employeeId || null,
+          password: cleanUser,
+        })
+
+        const createdUser = res?.user || res
+        const newRecord: DirectoryUser = {
+          userId: createdUser?.accountId || (createdUser?.id ? `USR-${createdUser.id}` : `USR-${Date.now()}`),
+          name: createdUser?.name || draft.name.trim(),
+          username: cleanUser,
+          role: draft.role as SystemRole,
+          status: 'Active',
+          employeeId: createdUser?.employeeId ? `EMP-${String(createdUser.employeeId).padStart(3, '0')}` : null,
+        }
+
+        setDirectory((current) => [newRecord, ...current.filter((u) => u.username !== cleanUser)])
+        setNotice(`User account saved to database! Login credentials: username "${cleanUser}", password "${cleanUser}".`)
+        record('Created user account for', draft.name.trim(), 'Account saved to database with username as password')
+
+        if (onRefresh) {
+          await onRefresh()
+        }
+      } catch (err: any) {
+        console.error('Failed to create user in database:', err)
+        setNotice(`Failed to save user to database: ${err?.message || 'Server error'}`)
+      }
     } else if (dialog?.kind === 'edit') {
       const before = directory.find((user) => user.userId === dialog.userId)
       setDirectory((current) => current.map((user) => user.userId === dialog.userId ? {
