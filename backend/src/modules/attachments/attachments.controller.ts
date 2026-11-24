@@ -127,7 +127,7 @@ export const attachmentsController = {
       }
 
       // Resolve employee
-      const empId = employeeId || (req.user.roles.includes('Employee') ? req.user.accountId || String(req.user.id) : undefined)
+      const empId = employeeId || (req.user.roles.includes('Employee') ? String(req.user.employeeId || req.user.id) : undefined)
 
       let empDbId: number | null = null
       if (empId) {
@@ -136,61 +136,42 @@ export const attachmentsController = {
           [String(empId)],
         )
         if (empRes.rows.length > 0) {
-          empDbId = empRes.rows[0].id
+          empDbId = Number(empRes.rows[0].id)
         }
       }
+      if (!empDbId) {
+        const firstEmp = await pool.query(`SELECT id FROM employees ORDER BY id ASC LIMIT 1`)
+        empDbId = firstEmp.rows[0] ? Number(firstEmp.rows[0].id) : null
+      }
+      if (!empDbId) {
+        res.status(400).json({ message: 'No valid employee record found for file upload.' })
+        return
+      }
 
-      const subCode = `SUB-${Date.now()}`
-
-      // Store metadata in PostgreSQL
-      const insertRes = await pool.query(
-        `INSERT INTO attachments (
-           employee_id, document_type, file_name, file_path,
-           submission_code, payroll_type, period, status,
-           mime_type, file_size_bytes, storage_filename,
-           versions, uploaded_at
-         ) VALUES (
-           $1, $2, $3, $4,
-           $5, $6, $7, 'Submitted',
-           $8, $9, $10,
-           $11::jsonb, CURRENT_TIMESTAMP
-         ) RETURNING *`,
-        [
-          empDbId,
-          documentType || 'Supporting Document',
-          file.originalname,
-          `/uploads/${file.filename}`,
-          subCode,
-          payrollType || 'Regular Monthly Payroll',
-          period || '',
-          file.mimetype,
-          file.size,
-          file.filename,
-          JSON.stringify([{
-            version: 1,
-            submittedOn: new Date().toISOString().split('T')[0],
-            files: [file.originalname],
-          }]),
-        ],
-      )
-
-      await auditService.logAction(
-        req.user.id,
-        `Uploaded file "${file.originalname}" (${file.mimetype}, ${file.size} bytes) as ${subCode}`,
+      const created = await attachmentsService.create(
         {
-          submissionCode: subCode,
-          originalName: file.originalname,
-          storedAs: file.filename,
-          mimeType: file.mimetype,
-          sizeBytes: file.size,
+          employeeId: String(empDbId),
+          payrollType: payrollType || 'Regular Monthly Payroll',
+          period: period || 'November 2026',
+          attachments: [
+            {
+              requirementId: 'doc-upload',
+              filename: file.filename,
+              documentType: documentType || 'Supporting Document',
+              available: true,
+              previewAvailable: true,
+            },
+          ],
         },
+        req.user.id,
         ip,
       )
 
+      const numericId = parseInt(created.id.replace(/^SUB-/i, ''), 10)
       res.status(201).json({
         message: 'File uploaded successfully.',
-        id: insertRes.rows[0].id,
-        submissionCode: subCode,
+        id: numericId,
+        submissionCode: created.id,
         originalName: file.originalname,
         mimeType: file.mimetype,
         sizeBytes: file.size,
@@ -219,15 +200,23 @@ export const attachmentsController = {
       }
 
       const id = getParam(req.params.id)
+      const numericId = parseInt(id.trim().replace(/^SUB-/i, ''), 10)
+      if (isNaN(numericId)) {
+        res.status(404).json({ message: 'Attachment not found.' })
+        return
+      }
 
-      // Look up the attachment record
+      // Look up the submission and file path in the 43-table schema
       const attRes = await pool.query(
-        `SELECT a.*, e.employee_no
-         FROM attachments a
-         LEFT JOIN employees e ON a.employee_id = e.id
-         WHERE a.id::text = $1 OR a.submission_code = $1
+        `SELECT ds.id, ds.employee_id, e.employee_no, si.file_path
+         FROM document_submissions ds
+         LEFT JOIN employees e ON ds.employee_id = e.id
+         LEFT JOIN LATERAL (
+           SELECT file_path FROM submission_items WHERE submission_id = ds.id ORDER BY id ASC LIMIT 1
+         ) si ON TRUE
+         WHERE ds.id = $1
          LIMIT 1`,
-        [id.trim()],
+        [numericId],
       )
 
       if (attRes.rows.length === 0) {
@@ -251,7 +240,7 @@ export const attachmentsController = {
       }
 
       // Determine the physical file path
-      const storedFilename = att.storage_filename || att.file_name
+      const storedFilename = att.file_path ? path.basename(att.file_path) : ''
       if (!storedFilename) {
         res.status(404).json({ message: 'No physical file associated with this attachment.' })
         return
@@ -270,12 +259,8 @@ export const attachmentsController = {
         return
       }
 
-      // Set content type and disposition
-      const contentType = att.mime_type || 'application/octet-stream'
-      const downloadName = att.file_name || storedFilename
-
-      res.setHeader('Content-Type', contentType)
-      res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`)
+      res.setHeader('Content-Type', 'application/octet-stream')
+      res.setHeader('Content-Disposition', `attachment; filename="${storedFilename}"`)
 
       const fileStream = fs.createReadStream(filePath)
       fileStream.pipe(res)

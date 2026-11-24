@@ -1,6 +1,5 @@
 import { pool } from '../../config/db'
 import { auditService } from '../audit/audit.service'
-import { payslipsService } from '../payslips/payslips.service'
 
 export interface JournalLine {
   id: string
@@ -85,10 +84,6 @@ export interface LandBankExport {
   reconciliation: LandBankReconciliation
 }
 
-/**
- * Validates LandBank account numbers:
- * Must be digits only, standard length 10 to 16 digits, non-dummy sequence.
- */
 export function isValidLandBankAccount(accountNumber?: string | null): boolean {
   if (!accountNumber) return false
   const clean = accountNumber.trim()
@@ -115,85 +110,103 @@ export interface DisbursementRecord {
   createdAt: string
 }
 
-function mapDisbursementRow(row: any): DisbursementRecord {
-  return {
-    id: row.id,
-    payrollId: row.payroll_id,
-    dvNumber: row.dv_number,
-    method: row.method || 'Bank Transfer',
-    status: row.status || 'Scheduled',
-    releasedAt: row.released_at ? new Date(row.released_at).toISOString() : undefined,
-    fundSource: row.fund_source || 'F01',
-    budgetDocumentType: row.budget_document_type,
-    budgetDocumentNumber: row.budget_document_number,
-    journalEntry: row.journal_entry,
-    adaAdcaNumber: row.ada_adca_number,
-    bankUploadFilename: row.bank_upload_filename,
-    totalAmount: parseFloat(row.total_amount) || 0,
-    createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
-  }
-}
+const BATCH_DETAIL_SQL = `
+  SELECT pb.*,
+         pp.label AS period_label,
+         o.name AS office_name,
+         f.code AS fund_code,
+         st_slip.code AS slip_type_code,
+         et.name AS emp_type_name,
+         st.code AS status_code,
+         pi.id AS payroll_item_id,
+         e.id AS employee_id,
+         e.employee_no,
+         TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS employee_name,
+         e.bank_account_no
+  FROM payroll_batches pb
+  JOIN payroll_periods pp ON pp.id = pb.period_id
+  JOIN offices o ON o.id = pb.office_id
+  JOIN funds f ON f.id = pb.fund_id
+  JOIN slip_types st_slip ON st_slip.id = f.slip_type_id
+  JOIN employment_types et ON et.id = pb.employment_type_id
+  JOIN statuses st ON st.id = pb.status_id
+  LEFT JOIN LATERAL (
+    SELECT * FROM payroll_items WHERE batch_id = pb.id ORDER BY id ASC LIMIT 1
+  ) pi ON TRUE
+  LEFT JOIN appointments a ON a.id = pi.appointment_id
+  LEFT JOIN employees e ON e.id = a.employee_id
+`
 
 export const disbursementService = {
   async findAll(): Promise<DisbursementRecord[]> {
     const res = await pool.query(
-      `SELECT * FROM disbursements ORDER BY id DESC`,
+      `SELECT os.id,
+              os.batch_id AS payroll_id,
+              os.slip_no AS budget_document_number,
+              os.amount AS total_amount,
+              dv.dv_no AS dv_number,
+              dv.dv_date,
+              COALESCE(st_dv.name, st_os.name, 'Scheduled') AS status,
+              f.code AS fund_source,
+              slt.code AS budget_document_type,
+              af.ada_no AS ada_adca_number,
+              buf.file_name AS bank_upload_filename,
+              af.generated_at AS released_at
+       FROM obligation_slips os
+       JOIN payroll_batches pb ON pb.id = os.batch_id
+       JOIN funds f ON f.id = pb.fund_id
+       JOIN slip_types slt ON slt.id = f.slip_type_id
+       JOIN statuses st_os ON st_os.id = os.status_id
+       LEFT JOIN disbursement_vouchers dv ON dv.obligation_slip_id = os.id
+       LEFT JOIN statuses st_dv ON st_dv.id = dv.status_id
+       LEFT JOIN LATERAL (
+         SELECT * FROM ada_forms WHERE batch_id = os.batch_id ORDER BY id DESC LIMIT 1
+       ) af ON TRUE
+       LEFT JOIN bank_upload_files buf ON buf.ada_id = af.id
+       ORDER BY os.id DESC`,
     )
-    return res.rows.map(mapDisbursementRow)
+    return res.rows.map((r: any) => ({
+      id: Number(r.id),
+      payrollId: Number(r.payroll_id),
+      dvNumber: r.dv_number || undefined,
+      method: 'ADA',
+      status: r.status || 'Scheduled',
+      releasedAt: r.released_at ? new Date(r.released_at).toISOString() : undefined,
+      fundSource: r.fund_source || 'F01',
+      budgetDocumentType: r.budget_document_type || 'ORAS',
+      budgetDocumentNumber: r.budget_document_number || undefined,
+      adaAdcaNumber: r.ada_adca_number || undefined,
+      bankUploadFilename: r.bank_upload_filename || undefined,
+      totalAmount: parseFloat(r.total_amount) || 0,
+      createdAt: r.dv_date ? new Date(r.dv_date).toISOString() : new Date().toISOString(),
+    }))
   },
 
   async findByPayroll(payrollId: number): Promise<DisbursementRecord | undefined> {
-    const res = await pool.query(
-      `SELECT * FROM disbursements WHERE payroll_id = $1 ORDER BY id DESC LIMIT 1`,
-      [payrollId],
-    )
-    if (res.rows.length === 0) return undefined
-    return mapDisbursementRow(res.rows[0])
+    const all = await disbursementService.findAll()
+    return all.find((d) => d.payrollId === payrollId)
   },
 
-  /**
-   * Generates ORAS for F01 or BURAS for F05/F07
-   */
   async generateBudgetDocument(payrollId: number): Promise<any> {
-    const pRes = await pool.query(`SELECT * FROM payroll WHERE id = $1`, [payrollId])
-    if (pRes.rows.length === 0) {
-      throw new Error(`Payroll record #${payrollId} not found.`)
-    }
-    const payroll = pRes.rows[0]
-    const fund = payroll.fund_source || 'F01'
-    const isOras = fund === 'F01'
-    const docType = isOras ? 'ORAS' : 'BURAS'
+    const res = await pool.query(`${BATCH_DETAIL_SQL} WHERE pb.id = $1`, [payrollId])
+    if (res.rows.length === 0) throw new Error(`Payroll record #${payrollId} not found.`)
+    const b = res.rows[0]
+    const docType = b.slip_type_code === 'BURAS' ? 'BURAS' : 'ORAS'
     const docNumber = `${docType}-${new Date().getFullYear()}-${String(payrollId).padStart(4, '0')}`
-
-    const gross = parseFloat(payroll.gross_pay) || 0
-    const basic = parseFloat(payroll.basic_pay) || (gross - (parseFloat(payroll.allowances) || 0))
-    const pera = parseFloat(payroll.allowances) || 0
+    const gross = parseFloat(b.total_gross) || 0
 
     return {
       documentType: docType,
       documentNumber: docNumber,
-      fundSource: fund,
-      fundTitle: fund === 'F01' ? 'General Fund (GAA)' : fund === 'F05' ? 'Revolving Fund' : 'Trust Fund',
+      fundSource: b.fund_code || 'F01',
+      fundTitle: b.fund_code === 'F01' ? 'General Fund (GAA)' : b.fund_code === 'F05' ? 'Revolving Fund' : 'Trust Fund',
       date: new Date().toISOString().split('T')[0],
       payee: 'MSU-Naawan Personnel / Beneficiaries',
-      office: payroll.department || 'Mindanao State University at Naawan',
-      particulars: `Obligation/allotment of salaries and allowances for ${payroll.employee_name} (${payroll.period})`,
+      office: b.office_name || 'Mindanao State University at Naawan',
+      particulars: `Obligation/allotment of salaries for ${b.employee_name || b.batch_no} (${b.period_label})`,
       mfoPap: 'Higher Education Program - 310100100002000',
       breakdown: [
-        {
-          objectCode: '5-01-01-010',
-          accountTitle: 'Salaries and Wages - Regular',
-          amount: basic,
-        },
-        ...(pera > 0
-          ? [
-              {
-                objectCode: '5-01-02-010',
-                accountTitle: 'Personnel Economic Relief Allowance (PERA)',
-                amount: pera,
-              },
-            ]
-          : []),
+        { objectCode: '5-01-01-010', accountTitle: 'Salaries and Wages - Regular', amount: gross },
       ],
       totalAmount: gross,
       certifiedBy: 'Budget Officer',
@@ -201,100 +214,25 @@ export const disbursementService = {
     }
   },
 
-  /**
-   * Generates balanced Journal Entry: Debit = Credit
-   */
-  generateJournalEntry(payroll: any): JournalEntry {
-    const gross = parseFloat(payroll.gross_pay) || 0
-    const net = parseFloat(payroll.net_pay) || 0
-    const allowances = parseFloat(payroll.allowances) || 0
-    const basic = parseFloat(payroll.basic_pay) || (gross - allowances)
+  generateJournalEntry(batch: any): JournalEntry {
+    const gross = parseFloat(batch.total_gross) || 0
+    const ded = parseFloat(batch.total_deductions) || 0
+    const net = parseFloat(batch.total_net) || 0
 
-    const breakdown = payroll.breakdown || {}
-    const mandatory = breakdown.mandatoryDeductions || {}
-    const gsis = mandatory.gsis || Math.round(basic * 0.09 * 100) / 100
-    const ph = mandatory.philHealth || Math.round(basic * 0.025 * 100) / 100
-    const pagIbig = mandatory.pagIbig || 200.0
-    const tax = mandatory.withholdingTax || 0
-
-    const attendanceDed = parseFloat(payroll.attendance_deductions) || 0
-    const otherDed = parseFloat(payroll.other_deductions) || 0
-
-    const lines: JournalLine[] = []
-
-    // 1. Debits (Expenses)
-    lines.push({
-      id: 'JL-1',
-      accountCode: '5-01-01-010',
-      accountTitle: 'Salaries and Wages - Regular',
-      debit: basic,
-      credit: 0,
-    })
-
-    if (allowances > 0) {
+    const lines: JournalLine[] = [
+      { id: 'JL-1', accountCode: '5-01-01-010', accountTitle: 'Salaries and Wages - Regular', debit: gross, credit: 0 },
+    ]
+    if (ded > 0) {
       lines.push({
         id: 'JL-2',
-        accountCode: '5-01-02-010',
-        accountTitle: 'Personnel Economic Relief Allowance (PERA)',
-        debit: allowances,
-        credit: 0,
-      })
-    }
-
-    // 2. Credits (Liabilities & Net Cash)
-    if (gsis > 0) {
-      lines.push({
-        id: 'JL-3',
         accountCode: '2-02-01-020',
-        accountTitle: 'Due to GSIS',
+        accountTitle: 'Statutory & Payroll Deductions Payable',
         debit: 0,
-        credit: gsis,
+        credit: ded,
       })
     }
-
-    if (ph > 0) {
-      lines.push({
-        id: 'JL-4',
-        accountCode: '2-02-01-030',
-        accountTitle: 'Due to PhilHealth',
-        debit: 0,
-        credit: ph,
-      })
-    }
-
-    if (pagIbig > 0) {
-      lines.push({
-        id: 'JL-5',
-        accountCode: '2-02-01-040',
-        accountTitle: 'Due to Pag-IBIG',
-        debit: 0,
-        credit: pagIbig,
-      })
-    }
-
-    if (tax > 0) {
-      lines.push({
-        id: 'JL-6',
-        accountCode: '2-02-01-010',
-        accountTitle: 'Due to BIR',
-        debit: 0,
-        credit: tax,
-      })
-    }
-
-    if (attendanceDed + otherDed > 0) {
-      lines.push({
-        id: 'JL-7',
-        accountCode: '2-02-01-990',
-        accountTitle: 'Other Payables / Attendance Deductions',
-        debit: 0,
-        credit: attendanceDed + otherDed,
-      })
-    }
-
-    // Cash in Bank credit
     lines.push({
-      id: 'JL-8',
+      id: 'JL-3',
       accountCode: '1-01-04-040',
       accountTitle: 'Cash - Modified Disbursement System (MDS), Regular',
       debit: 0,
@@ -303,167 +241,113 @@ export const disbursementService = {
 
     const totalDebit = Math.round(lines.reduce((s, l) => s + l.debit, 0) * 100) / 100
     const totalCredit = Math.round(lines.reduce((s, l) => s + l.credit, 0) * 100) / 100
-    const isBalanced = Math.abs(totalDebit - totalCredit) < 0.05
-
     return {
       id: `JE-${Date.now()}`,
-      reference: `PR-${payroll.id}`,
+      reference: `PR-${batch.id}`,
       date: new Date().toISOString().split('T')[0],
       lines,
       totalDebit,
       totalCredit,
-      isBalanced,
+      isBalanced: Math.abs(totalDebit - totalCredit) < 0.05,
     }
   },
 
-  /**
-   * Generates Disbursement Voucher (DV) Data
-   */
   async generateDisbursementVoucher(payrollId: number): Promise<DisbursementVoucher> {
-    const pRes = await pool.query(
-      `SELECT p.*, e.employee_no 
-       FROM payroll p 
-       LEFT JOIN employees e ON p.employee_id = e.id 
-       WHERE p.id = $1`,
-      [payrollId],
-    )
-
-    if (pRes.rows.length === 0) {
-      throw new Error(`Payroll record #${payrollId} not found.`)
-    }
-
-    const payroll = pRes.rows[0]
-    const fund = payroll.fund_source || 'F01'
+    const res = await pool.query(`${BATCH_DETAIL_SQL} WHERE pb.id = $1`, [payrollId])
+    if (res.rows.length === 0) throw new Error(`Payroll record #${payrollId} not found.`)
+    const b = res.rows[0]
     const budgetDoc = await disbursementService.generateBudgetDocument(payrollId)
-    const journal = disbursementService.generateJournalEntry(payroll)
-
+    const journal = disbursementService.generateJournalEntry(b)
     const dvNumber = `DV-${new Date().getFullYear()}-${String(payrollId).padStart(4, '0')}`
+    const approved = b.status_code === 'APPROVED' || b.status_code === 'DISBURSED'
 
     return {
       dvNumber,
       date: new Date().toISOString().split('T')[0],
       payrollId,
-      payrollTitle: `${payroll.payroll_type_name || 'Payroll'} - ${payroll.period}`,
-      period: payroll.period,
-      fundSource: fund,
+      payrollTitle: `${b.emp_type_name || 'Payroll'} - ${b.period_label}`,
+      period: b.period_label,
+      fundSource: b.fund_code || 'F01',
       budgetDocument: {
         type: budgetDoc.documentType,
         number: budgetDoc.documentNumber,
         amount: budgetDoc.totalAmount,
         certified: true,
       },
-      payee: payroll.employee_name,
-      office: payroll.department,
-      particulars: `Payment of salaries and allowances for the period ${payroll.period} per approved payroll register`,
-      grossAmount: parseFloat(payroll.gross_pay) || 0,
-      deductions: parseFloat(payroll.deductions) || 0,
-      netAmount: parseFloat(payroll.net_pay) || 0,
+      payee: b.employee_name || b.batch_no,
+      office: b.office_name,
+      particulars: `Payment of salaries for period ${b.period_label} per approved payroll register`,
+      grossAmount: parseFloat(b.total_gross) || 0,
+      deductions: parseFloat(b.total_deductions) || 0,
+      netAmount: parseFloat(b.total_net) || 0,
       modeOfPayment: 'ADA',
       journalEntry: journal,
-      status: payroll.ready_for_dv ? 'Approved' : 'Draft',
-      prerequisitesMet: Boolean(payroll.ready_for_dv || payroll.locked),
+      status: b.status_code === 'DISBURSED' ? 'Released' : approved ? 'Approved' : 'Draft',
+      prerequisitesMet: approved,
     }
   },
 
-  /**
-   * Generates LandBank Electronic Batch Upload File Data
-   */
   async generateLandBankFile(
     payrollId: number,
     actingUserId?: number | null,
     ip?: string | null,
   ): Promise<LandBankExport> {
-    const pRes = await pool.query(
-      `SELECT p.*, e.employee_no, e.full_name, e.bank_account_number, e.bank_name
-       FROM payroll p
-       LEFT JOIN employees e ON p.employee_id = e.id
-       WHERE p.id = $1`,
-      [payrollId],
-    )
-
-    if (pRes.rows.length === 0) {
-      throw new Error(`Payroll record #${payrollId} not found.`)
-    }
-
-    const payroll = pRes.rows[0]
+    const res = await pool.query(`${BATCH_DETAIL_SQL} WHERE pb.id = $1`, [payrollId])
+    if (res.rows.length === 0) throw new Error(`Payroll record #${payrollId} not found.`)
+    const b = res.rows[0]
     const filename = `LB_PAYROLL_${new Date().getFullYear()}_${String(payrollId).padStart(4, '0')}.txt`
     const companyCode = 'MSUN-001'
-
-    const net = parseFloat(payroll.net_pay) || 0
-    const rawAccount = payroll.bank_account_number ? String(payroll.bank_account_number).trim() : ''
+    const net = parseFloat(b.total_net) || 0
+    const rawAccount = b.bank_account_no ? String(b.bank_account_no).trim() : ''
 
     const records: LandBankRecord[] = []
     const manualDisbursementEmployees: ManualDisbursementRecord[] = []
 
-    const hasValidBank = isValidLandBankAccount(rawAccount)
-
-    if (hasValidBank) {
+    if (isValidLandBankAccount(rawAccount)) {
       records.push({
         accountNumber: rawAccount,
-        employeeNo: payroll.employee_no || `EMP-${payroll.employee_id || 1}`,
-        employeeName: payroll.employee_name,
+        employeeNo: b.employee_no || `EMP-${b.employee_id || 1}`,
+        employeeName: b.employee_name || b.batch_no,
         netAmount: net,
         validAccount: true,
-        bankName: payroll.bank_name || 'LandBank',
+        bankName: 'LandBank',
       })
     } else {
-      let reason = 'No bank account on record'
-      if (rawAccount) {
-        if (/^1234567890|0123456789|0000000000/.test(rawAccount)) {
-          reason = 'Rejected placeholder or dummy bank account number'
-        } else if (!/^\d+$/.test(rawAccount)) {
-          reason = 'Bank account number contains non-numeric characters'
-        } else if (rawAccount.length < 10) {
-          reason = 'Bank account number is incomplete (under 10 digits)'
-        } else {
-          reason = 'Invalid bank account number format'
-        }
-      }
       manualDisbursementEmployees.push({
-        employeeId: payroll.employee_id,
-        employeeNo: payroll.employee_no || `EMP-${payroll.employee_id || 1}`,
-        employeeName: payroll.employee_name,
+        employeeId: b.employee_id ? Number(b.employee_id) : undefined,
+        employeeNo: b.employee_no || `EMP-${b.employee_id || 1}`,
+        employeeName: b.employee_name || b.batch_no,
         netAmount: net,
-        reason,
+        reason: rawAccount ? 'Invalid bank account number format' : 'No bank account on record',
       })
     }
 
-    const bankDisbursementAmount = Math.round(records.reduce((s, r) => s + r.netAmount, 0) * 100) / 100
-    const manualDisbursementAmount = Math.round(manualDisbursementEmployees.reduce((s, r) => s + r.netAmount, 0) * 100) / 100
-    const totalApprovedPayrollAmount = net
+    const bankAmt = Math.round(records.reduce((s, r) => s + r.netAmount, 0) * 100) / 100
+    const manualAmt = Math.round(manualDisbursementEmployees.reduce((s, r) => s + r.netAmount, 0) * 100) / 100
 
-    // Generate formatted content compliant with university electronic bank payroll format
-    let content = `H|${companyCode}|${new Date().toISOString().split('T')[0]}|${records.length}|${bankDisbursementAmount.toFixed(2)}\n`
+    let content = `H|${companyCode}|${new Date().toISOString().split('T')[0]}|${records.length}|${bankAmt.toFixed(2)}\n`
     records.forEach((r, idx) => {
       content += `D|${idx + 1}|${r.accountNumber}|${r.employeeName.toUpperCase()}|${r.netAmount.toFixed(2)}\n`
     })
-    content += `T|${records.length}|${bankDisbursementAmount.toFixed(2)}\n`
+    content += `T|${records.length}|${bankAmt.toFixed(2)}\n`
 
     const reconciliation: LandBankReconciliation = {
-      totalApprovedPayrollAmount,
-      bankDisbursementAmount,
-      manualDisbursementAmount,
-      isReconciled: Math.abs(totalApprovedPayrollAmount - (bankDisbursementAmount + manualDisbursementAmount)) < 0.01,
+      totalApprovedPayrollAmount: net,
+      bankDisbursementAmount: bankAmt,
+      manualDisbursementAmount: manualAmt,
+      isReconciled: Math.abs(net - (bankAmt + manualAmt)) < 0.01,
       accountingDecisionRequired:
-        'University Accounting Decision Required: Determine whether a single master Disbursement Voucher (DV) is issued with split ADA and MDS Check payment lines, or whether separate DVs must be issued for electronic LandBank bank transfer versus manual payroll check/cash disbursement.',
+        'University Accounting Decision Required for electronic LandBank vs manual check/cash disbursement.',
     }
 
-    // Audit logging for LandBank export generation/download
     if (actingUserId !== undefined) {
       await auditService.logAction(
         actingUserId || null,
-        `Generated/downloaded LandBank electronic disbursement file for payroll #${payrollId}`,
-        {
-          payrollId,
-          filename,
-          bankDisbursementCount: records.length,
-          bankDisbursementAmount,
-          manualDisbursementCount: manualDisbursementEmployees.length,
-          manualDisbursementAmount,
-          totalApprovedPayrollAmount,
-          isReconciled: reconciliation.isReconciled,
-        },
+        `Generated LandBank disbursement file for payroll #${payrollId}`,
+        { payrollId, filename, bankAmt, manualAmt },
         ip || null,
+        'BANK_UPLOAD_FILE',
+        payrollId,
       )
     }
 
@@ -472,109 +356,124 @@ export const disbursementService = {
       generatedAt: new Date().toISOString(),
       companyCode,
       totalRecords: records.length,
-      totalAmount: bankDisbursementAmount,
+      totalAmount: bankAmt,
       records,
       content,
       missingAccountsCount: manualDisbursementEmployees.length,
       manualDisbursementEmployees,
-      manualDisbursementAmount,
-      totalApprovedPayrollAmount,
+      manualDisbursementAmount: manualAmt,
+      totalApprovedPayrollAmount: net,
       reconciliation,
     }
   },
 
-  /**
-   * Releases Disbursement (Marks payroll disbursed and releases payslips)
-   */
   async releaseDisbursement(
     payrollId: number,
     actingUserId?: number | null,
     ip?: string | null,
   ): Promise<DisbursementRecord> {
-    const pRes = await pool.query(`SELECT * FROM payroll WHERE id = $1`, [payrollId])
-    if (pRes.rows.length === 0) {
-      throw new Error(`Payroll record #${payrollId} not found.`)
-    }
-    const payroll = pRes.rows[0]
+    const res = await pool.query(`${BATCH_DETAIL_SQL} WHERE pb.id = $1`, [payrollId])
+    if (res.rows.length === 0) throw new Error(`Payroll record #${payrollId} not found.`)
+    const b = res.rows[0]
 
-    const journal = disbursementService.generateJournalEntry(payroll)
-    const dvNumber = `DV-${new Date().getFullYear()}-${String(payrollId).padStart(4, '0')}`
+    const journal = disbursementService.generateJournalEntry(b)
+    const year = new Date().getFullYear()
+    const slipNo = `OBL-${year}-${String(payrollId).padStart(4, '0')}`
+    const dvNo = `DV-${year}-${String(payrollId).padStart(4, '0')}`
+    const jevNo = `JEV-${year}-${String(payrollId).padStart(4, '0')}`
+    const adaNo = `ADA-${year}-${String(payrollId).padStart(4, '0')}`
+    const lbFile = `LB_PAYROLL_${year}_${String(payrollId).padStart(4, '0')}.txt`
 
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
 
-      // 1. Update or Insert disbursement record
-      const disbRes = await client.query(
-        `INSERT INTO disbursements (
-           payroll_id, method, status, released_at, dv_number,
-           fund_source, budget_document_type, journal_entry, total_amount,
-           disbursed_by, created_at
-         ) VALUES (
-           $1, 'Bank Transfer', 'Released', CURRENT_TIMESTAMP, $2,
-           $3, $4, $5::jsonb, $6,
-           $7, CURRENT_TIMESTAMP
-         )
-         ON CONFLICT (id) DO UPDATE SET
-           status = 'Released',
-           released_at = CURRENT_TIMESTAMP,
-           disbursed_by = EXCLUDED.disbursed_by,
-           journal_entry = EXCLUDED.journal_entry
-         RETURNING *`,
-        [
-          payrollId,
-          dvNumber,
-          payroll.fund_source || 'F01',
-          payroll.fund_source === 'F01' ? 'ORAS' : 'BURAS',
-          JSON.stringify(journal),
-          payroll.net_pay,
-          actingUserId || null,
-        ],
-      )
+      const relDisbSt = (
+        await client.query(`SELECT id FROM statuses WHERE category = 'DISBURSEMENT' AND code = 'RELEASED' LIMIT 1`)
+      ).rows[0].id
+      const disbPaySt = (
+        await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'DISBURSED' LIMIT 1`)
+      ).rows[0].id
+      const actorId =
+        actingUserId ||
+        Number((await client.query(`SELECT id FROM users ORDER BY id ASC LIMIT 1`)).rows[0].id)
 
-      // 2. Update payroll status to 'Disbursed'
-      await client.query(
-        `UPDATE payroll SET
-           status = 'Disbursed',
-           stage = 'Disbursed',
-           updated_at = CURRENT_TIMESTAMP
-         WHERE id = $1`,
-        [payrollId],
+      // 1. Upsert obligation_slip
+      const osRes = await client.query(
+        `INSERT INTO obligation_slips (batch_id, slip_no, amount, status_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (slip_no) DO UPDATE SET status_id = EXCLUDED.status_id
+         RETURNING id`,
+        [payrollId, slipNo, b.total_gross, relDisbSt],
       )
+      const osId = Number(osRes.rows[0].id)
 
-      // 3. Automatically generate and release payslip
-      if (payroll.employee_id) {
+      // 2. Upsert disbursement_voucher
+      const dvRes = await client.query(
+        `INSERT INTO disbursement_vouchers (obligation_slip_id, dv_no, amount, dv_date, status_id)
+         VALUES ($1, $2, $3, CURRENT_DATE, $4)
+         ON CONFLICT (obligation_slip_id) DO UPDATE SET status_id = EXCLUDED.status_id
+         RETURNING id`,
+        [osId, dvNo, b.total_net, relDisbSt],
+      )
+      const dvId = Number(dvRes.rows[0].id)
+
+      // 3. Upsert journal_entry + lines
+      const jeRes = await client.query(
+        `INSERT INTO journal_entries (disbursement_voucher_id, jev_no, entry_date, particulars, prepared_by)
+         VALUES ($1, $2, CURRENT_DATE, $3, $4)
+         ON CONFLICT (disbursement_voucher_id) DO UPDATE SET particulars = EXCLUDED.particulars
+         RETURNING id`,
+        [dvId, jevNo, `Payroll disbursement for batch ${b.batch_no}`, actorId],
+      )
+      const jeId = Number(jeRes.rows[0].id)
+      await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [jeId])
+      for (const line of journal.lines) {
         await client.query(
-          `INSERT INTO payslips (
-             employee_id, payroll_id, period, gross_pay, deductions,
-             net_pay, payroll_title, status, released_at, released_by, breakdown, created_at
-           ) VALUES (
-             $1, $2, $3, $4, $5,
-             $6, $7, 'Released', CURRENT_TIMESTAMP, $8, $9::jsonb, CURRENT_TIMESTAMP
-           )`,
-          [
-            payroll.employee_id,
-            payrollId,
-            payroll.period,
-            payroll.gross_pay,
-            payroll.deductions,
-            payroll.net_pay,
-            payroll.payroll_type_name || 'Regular Monthly Payroll',
-            actingUserId || null,
-            JSON.stringify(payroll.breakdown || {}),
-          ],
+          `INSERT INTO journal_entry_lines (journal_entry_id, account_code, account_title, debit, credit)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [jeId, line.accountCode, line.accountTitle, line.debit, line.credit],
         )
       }
 
+      // 4. Upsert ada_form & bank_upload_file
+      const adaRes = await client.query(
+        `INSERT INTO ada_forms (batch_id, form_type, ada_no, total_amount, file_path, status_id)
+         VALUES ($1, 'ADA', $2, $3, $4, $5)
+         ON CONFLICT (ada_no) DO UPDATE SET status_id = EXCLUDED.status_id
+         RETURNING id`,
+        [payrollId, adaNo, b.total_net, `/uploads/${adaNo}.pdf`, relDisbSt],
+      )
+      const adaId = Number(adaRes.rows[0].id)
+      await client.query(
+        `INSERT INTO bank_upload_files (ada_id, file_name, record_count, total_amount)
+         VALUES ($1, $2, 1, $3)
+         ON CONFLICT (ada_id) DO UPDATE SET file_name = EXCLUDED.file_name`,
+        [adaId, lbFile, b.total_net],
+      )
+
+      // 5. Update payroll_batch status to DISBURSED
+      await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [disbPaySt, payrollId])
+
+      // 6. Publish payslips for all items in this batch
+      await client.query(
+        `INSERT INTO payslips (payroll_item_id, published_at)
+         SELECT id, CURRENT_TIMESTAMP FROM payroll_items WHERE batch_id = $1
+         ON CONFLICT (payroll_item_id) DO NOTHING`,
+        [payrollId],
+      )
+
       await auditService.logAction(
-        actingUserId || null,
-        `Released disbursement and generated payslip for payroll #${payrollId} (${payroll.employee_name}) - Amount: ${payroll.net_pay}`,
-        { payrollId, dvNumber, amount: payroll.net_pay, status: 'Released' },
+        actorId,
+        `Released disbursement & published payslip for payroll #${payrollId}`,
+        { payrollId, dvNo, adaNo, amount: b.total_net },
         ip || null,
+        'DISBURSEMENT_VOUCHER',
+        dvId,
       )
 
       await client.query('COMMIT')
-      return mapDisbursementRow(disbRes.rows[0])
+      return (await disbursementService.findByPayroll(payrollId))!
     } catch (err) {
       await client.query('ROLLBACK')
       throw err

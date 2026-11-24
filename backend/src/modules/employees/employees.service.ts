@@ -49,61 +49,208 @@ export interface HrEmployee {
   createdAt?: string
 }
 
-/**
- * Masks a bank account number to avoid exposing full credentials in ordinary API responses.
- * (e.g. "1234567890" -> "******7890")
- */
 export function maskBankAccount(accountNumber?: string | null): string | undefined {
   if (!accountNumber) return undefined
   const clean = accountNumber.trim()
   if (!clean) return undefined
-  if (clean.length <= 4) {
-    return '****'
-  }
+  if (clean.length <= 4) return '****'
   return '*'.repeat(clean.length - 4) + clean.slice(-4)
 }
 
-function mapEmployee(row: any, options?: { unmaskBank?: boolean }): HrEmployee {
+function splitFullName(fullName: string): { firstName: string; middleName: string | null; lastName: string } {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return { firstName: 'Employee', middleName: null, lastName: 'Record' }
+  if (parts.length === 1) return { firstName: parts[0], middleName: null, lastName: parts[0] }
+  if (parts.length === 2) return { firstName: parts[0], middleName: null, lastName: parts[1] }
   return {
-    id: row.id,
+    firstName: parts[0],
+    middleName: parts.slice(1, -1).join(' '),
+    lastName: parts[parts.length - 1],
+  }
+}
+
+const EMPLOYEE_SELECT_SQL = `
+  SELECT
+    e.id,
+    e.employee_no,
+    TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
+    e.birth_date,
+    e.bank_account_no,
+    e.tin,
+    e.gsis_no,
+    e.philhealth_no,
+    e.pagibig_no,
+    st.name AS status_name,
+    u.username,
+    a.id AS appointment_id,
+    a.position_title,
+    a.monthly_rate,
+    a.daily_rate,
+    a.hourly_rate,
+    a.effective_from,
+    a.effective_to,
+    o.name AS office_name,
+    et.name AS employment_type_name,
+    et.code AS employment_type_code,
+    f.code AS fund_code,
+    COALESCE(
+      NULLIF(TRIM(CONCAT_WS(' ', he.first_name, he.last_name)), ''),
+      hu.username,
+      ''
+    ) AS supervisor_name
+  FROM employees e
+  LEFT JOIN statuses st ON st.id = e.status_id
+  LEFT JOIN users u ON u.employee_id = e.id
+  LEFT JOIN LATERAL (
+    SELECT *
+    FROM appointments
+    WHERE employee_id = e.id
+    ORDER BY effective_from DESC, id DESC
+    LIMIT 1
+  ) a ON TRUE
+  LEFT JOIN offices o ON o.id = a.office_id
+  LEFT JOIN users hu ON hu.id = o.head_user_id
+  LEFT JOIN employees he ON he.id = hu.employee_id
+  LEFT JOIN employment_types et ON et.id = a.employment_type_id
+  LEFT JOIN funds f ON f.id = a.fund_id
+`
+
+function mapEmployee(row: any, options?: { unmaskBank?: boolean }): HrEmployee {
+  const empTypeCode = String(row.employment_type_code || 'REGULAR').toUpperCase()
+  const classification: EmployeeClassification =
+    empTypeCode === 'LECTURER' || /faculty|professor|instructor|dean/i.test(row.position_title || '')
+      ? 'Faculty'
+      : 'Staff'
+
+  let payBasis: PayBasis = 'Monthly'
+  let rate = row.monthly_rate
+  if (!rate && row.daily_rate) {
+    payBasis = 'Daily'
+    rate = row.daily_rate
+  } else if (!rate && row.hourly_rate) {
+    payBasis = 'Hourly'
+    rate = row.hourly_rate
+  }
+
+  const rawFund = String(row.fund_code || 'F01').toUpperCase()
+  const fundSource: FundSource =
+    rawFund === '05' || rawFund === 'F05'
+      ? 'F05'
+      : rawFund === '07' || rawFund === 'F07'
+        ? 'F07'
+        : 'F01'
+
+  const statusName = String(row.status_name || 'Active')
+  const employmentStatus: EmploymentStatus =
+    statusName === 'Inactive' || statusName === 'Resigned' ? statusName : 'Active'
+
+  const empTypeDisplay =
+    empTypeCode === 'REGULAR'
+      ? 'Permanent'
+      : empTypeCode === 'CONTRACTUAL'
+        ? 'Contractual'
+        : empTypeCode === 'JO'
+          ? 'Job Order'
+          : row.employment_type_name || 'Permanent'
+
+  return {
+    id: Number(row.id),
     employeeId: row.employee_no,
     name: row.full_name,
-    classification: row.classification || 'Staff',
-    employmentType: row.employment_type || 'Permanent',
-    position: row.position,
-    office: row.department,
-    supervisor: row.supervisor || '',
-    employmentStatus: row.employment_status || 'Active',
-    appointmentStart: row.appointment_start || '',
-    appointmentEnd: row.appointment_end || '',
-    fundSource: row.fund_source || 'F01',
-    payBasis: row.pay_basis || 'Monthly',
-    applicableRate: String(row.monthly_salary || '0'),
+    classification,
+    employmentType: empTypeDisplay,
+    position: row.position_title || 'Staff',
+    office: row.office_name || 'General Administration',
+    supervisor: row.supervisor_name || '',
+    employmentStatus,
+    appointmentStart: row.effective_from ? new Date(row.effective_from).toISOString().split('T')[0] : '',
+    appointmentEnd: row.effective_to ? new Date(row.effective_to).toISOString().split('T')[0] : '',
+    fundSource,
+    payBasis,
+    applicableRate: String(rate || '0'),
     bankAccountNumber: options?.unmaskBank
-      ? (row.bank_account_number || undefined)
-      : maskBankAccount(row.bank_account_number),
-    bankName: row.bank_name || undefined,
-    assignments: Array.isArray(row.assignments) ? row.assignments : [],
-    history: Array.isArray(row.history) ? row.history : [],
+      ? (row.bank_account_no || undefined)
+      : maskBankAccount(row.bank_account_no),
+    bankName: row.bank_account_no ? 'LandBank' : undefined,
+    assignments: [],
+    history: [],
     username: row.username || undefined,
-    createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
   }
+}
+
+async function resolveLookups(client: any, data: Partial<HrEmployee>) {
+  const statusCode = (data.employmentStatus || 'Active').toUpperCase()
+  const statusRes = await client.query(
+    `SELECT id FROM statuses WHERE category = 'EMPLOYEE' AND UPPER(code) = $1 LIMIT 1`,
+    [statusCode],
+  )
+  const statusId = Number(
+    statusRes.rows[0]?.id ||
+      (await client.query(`SELECT id FROM statuses WHERE category = 'EMPLOYEE' ORDER BY id ASC LIMIT 1`)).rows[0].id,
+  )
+
+  const officeName = data.office?.trim() || 'General Administration'
+  let officeRes = await client.query(
+    `SELECT id FROM offices WHERE LOWER(name) = LOWER($1) OR LOWER(code) = LOWER($1) LIMIT 1`,
+    [officeName],
+  )
+  let officeId: number
+  if (officeRes.rows.length > 0) {
+    officeId = Number(officeRes.rows[0].id)
+  } else {
+    const code = officeName.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 12) + '-' + Date.now().toString().slice(-4)
+    officeId = Number((await client.query(`INSERT INTO offices (code, name) VALUES ($1, $2) RETURNING id`, [code, officeName])).rows[0].id)
+  }
+
+  let ccRes = await client.query(
+    `SELECT id FROM cost_centers WHERE LOWER(name) = LOWER($1) OR LOWER(code) = LOWER($1) LIMIT 1`,
+    [officeName],
+  )
+  let costCenterId: number
+  if (ccRes.rows.length > 0) {
+    costCenterId = Number(ccRes.rows[0].id)
+  } else {
+    const code = officeName.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 12) + '-' + Date.now().toString().slice(-4)
+    costCenterId = Number((await client.query(`INSERT INTO cost_centers (code, name) VALUES ($1, $2) RETURNING id`, [code, officeName])).rows[0].id)
+  }
+
+  const fundCode = (data.fundSource || 'F01').toUpperCase()
+  const fundRes = await client.query(
+    `SELECT id FROM funds WHERE UPPER(code) = $1 OR UPPER(code) = $2 LIMIT 1`,
+    [fundCode, fundCode.replace(/^F/, '')],
+  )
+  const fundId = Number(
+    fundRes.rows[0]?.id || (await client.query(`SELECT id FROM funds ORDER BY id ASC LIMIT 1`)).rows[0].id,
+  )
+
+  const empTypeStr = (data.employmentType || 'Permanent').toLowerCase()
+  const empTypeCode = empTypeStr.includes('contract')
+    ? 'CONTRACTUAL'
+    : empTypeStr.includes('job') || empTypeStr === 'jo'
+      ? 'JO'
+      : empTypeStr.includes('lect')
+        ? 'LECTURER'
+        : 'REGULAR'
+  const etRes = await client.query(`SELECT id FROM employment_types WHERE code = $1 LIMIT 1`, [empTypeCode])
+  const employmentTypeId = Number(
+    etRes.rows[0]?.id || (await client.query(`SELECT id FROM employment_types ORDER BY id ASC LIMIT 1`)).rows[0].id,
+  )
+
+  return { statusId, officeId, costCenterId, fundId, employmentTypeId }
 }
 
 export const employeesService = {
   async findAll(): Promise<HrEmployee[]> {
-    const res = await pool.query(
-      `SELECT * FROM employees ORDER BY id ASC`,
-    )
+    const res = await pool.query(`${EMPLOYEE_SELECT_SQL} ORDER BY e.id ASC`)
     return res.rows.map((row) => mapEmployee(row))
   },
 
   async findById(idOrEmpNo: string, options?: { unmaskBank?: boolean }): Promise<HrEmployee | undefined> {
     const clean = idOrEmpNo.trim()
     const res = await pool.query(
-      `SELECT * FROM employees 
-       WHERE employee_no = $1 
-          OR (id::text = $1 AND $1 ~ '^[0-9]+$')
+      `${EMPLOYEE_SELECT_SQL}
+       WHERE e.employee_no = $1
+          OR (e.id::text = $1 AND $1 ~ '^[0-9]+$')
        LIMIT 1`,
       [clean],
     )
@@ -114,10 +261,10 @@ export const employeesService = {
   async findByUsername(username: string, options?: { unmaskBank?: boolean }): Promise<HrEmployee | undefined> {
     const clean = username.trim().toLowerCase().replace(/^@/, '')
     const res = await pool.query(
-      `SELECT * FROM employees 
-       WHERE LOWER(username) = $1 
-          OR LOWER(full_name) = $1 
-          OR employee_no = $1
+      `${EMPLOYEE_SELECT_SQL}
+       WHERE LOWER(u.username) = $1
+          OR LOWER(TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name))) = $1
+          OR LOWER(e.employee_no) = $1
        LIMIT 1`,
       [clean],
     )
@@ -128,9 +275,8 @@ export const employeesService = {
   async create(data: HrEmployee, actingUserId?: number | null, ip?: string | null): Promise<HrEmployee> {
     const employeeNo = data.employeeId?.trim()
     const fullName = data.name?.trim()
-    const department = data.office?.trim() || 'General Administration'
     const position = data.position?.trim() || 'Staff'
-    const salary = parseFloat(data.applicableRate) || 0.0
+    const rate = parseFloat(data.applicableRate) || 0.0
 
     if (!employeeNo || !fullName) {
       const err = new Error('Employee ID (number) and Full Name are required.')
@@ -138,83 +284,76 @@ export const employeesService = {
       throw err
     }
 
-    // Check duplicate employee_no
-    const dup = await pool.query(
-      `SELECT id FROM employees WHERE employee_no = $1 LIMIT 1`,
-      [employeeNo],
-    )
+    const dup = await pool.query(`SELECT id FROM employees WHERE employee_no = $1 LIMIT 1`, [employeeNo])
     if (dup.rows.length > 0) {
       const err = new Error(`Employee ID ${employeeNo} already exists.`)
       ;(err as any).statusCode = 409
       throw err
     }
 
-    const historyItems = data.history && data.history.length > 0 ? data.history : [
-      {
-        id: `HIST-${Date.now()}`,
-        effectiveDate: data.appointmentStart || new Date().toISOString().split('T')[0],
-        changeType: 'Record Created',
-        previousValue: 'None',
-        newValue: position,
-      },
-    ]
+    const { firstName, middleName, lastName } = splitFullName(fullName)
 
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
 
-      const res = await client.query(
+      const { statusId, officeId, costCenterId, fundId, employmentTypeId } = await resolveLookups(client, data)
+
+      const empRes = await client.query(
         `INSERT INTO employees (
-           employee_no, full_name, department, position, monthly_salary,
-           classification, employment_type, employment_status, fund_source,
-           pay_basis, supervisor, appointment_start, appointment_end,
-           assignments, history, username, bank_account_number, bank_name, created_at
-         ) VALUES (
-           $1, $2, $3, $4, $5,
-           $6, $7, $8, $9,
-           $10, $11, $12, $13,
-           $14::jsonb, $15::jsonb, $16, $17, $18, CURRENT_TIMESTAMP
-         ) RETURNING *`,
+           employee_no, last_name, first_name, middle_name, birth_date,
+           bank_account_no, status_id
+         ) VALUES ($1, $2, $3, $4, '1990-01-01', $5, $6)
+         RETURNING id`,
         [
           employeeNo,
-          fullName,
-          department,
-          position,
-          salary,
-          data.classification || 'Staff',
-          data.employmentType || 'Permanent',
-          data.employmentStatus || 'Active',
-          data.fundSource || 'F01',
-          data.payBasis || 'Monthly',
-          data.supervisor || '',
-          data.appointmentStart || '',
-          data.appointmentEnd || '',
-          JSON.stringify(data.assignments || []),
-          JSON.stringify(historyItems),
-          data.username?.toLowerCase().trim() || null,
+          lastName,
+          firstName,
+          middleName,
           data.bankAccountNumber ? data.bankAccountNumber.trim() : null,
-          data.bankName ? data.bankName.trim() : (data.bankAccountNumber ? 'LandBank' : null),
+          statusId,
         ],
       )
+      const empId = Number(empRes.rows[0].id)
 
-      const created = mapEmployee(res.rows[0])
+      const payBasis = data.payBasis || 'Monthly'
+      const monthlyRate = payBasis === 'Monthly' ? rate : null
+      const dailyRate = payBasis === 'Daily' ? rate : null
+      const hourlyRate = payBasis === 'Hourly' ? rate : null
+      const effectiveFrom = data.appointmentStart?.trim() || new Date().toISOString().split('T')[0]
+      const effectiveTo = data.appointmentEnd?.trim() || null
+
+      await client.query(
+        `INSERT INTO appointments (
+           employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+           position_title, monthly_rate, daily_rate, hourly_rate, effective_from, effective_to
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11::date)`,
+        [
+          empId,
+          officeId,
+          costCenterId,
+          fundId,
+          employmentTypeId,
+          position,
+          monthlyRate,
+          dailyRate,
+          hourlyRate,
+          effectiveFrom,
+          effectiveTo,
+        ],
+      )
 
       await auditService.logAction(
         actingUserId || null,
         `Created employee record for ${fullName} (${employeeNo})`,
-        {
-          employeeId: created.id,
-          employeeNo: created.employeeId,
-          position,
-          department,
-          hasBankAccount: Boolean(data.bankAccountNumber),
-          bankName: data.bankName || (data.bankAccountNumber ? 'LandBank' : undefined),
-        },
+        { employeeId: empId, employeeNo, position, office: data.office },
         ip || null,
+        'EMPLOYEE',
+        empId,
       )
 
       await client.query('COMMIT')
-      return created
+      return (await employeesService.findById(String(empId)))!
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
@@ -229,107 +368,124 @@ export const employeesService = {
     actingUserId?: number | null,
     ip?: string | null,
   ): Promise<HrEmployee | undefined> {
-    const existing = await employeesService.findById(idOrEmpNo)
-    if (!existing) return undefined
-
-    const updates: string[] = []
-    const values: any[] = []
-    let pIdx = 1
-
-    if (data.name !== undefined) {
-      updates.push(`full_name = $${pIdx++}`)
-      values.push(data.name.trim())
-    }
-    if (data.office !== undefined) {
-      updates.push(`department = $${pIdx++}`)
-      values.push(data.office.trim())
-    }
-    if (data.position !== undefined) {
-      updates.push(`position = $${pIdx++}`)
-      values.push(data.position.trim())
-    }
-    if (data.applicableRate !== undefined) {
-      updates.push(`monthly_salary = $${pIdx++}`)
-      values.push(parseFloat(data.applicableRate) || 0)
-    }
-    if (data.classification !== undefined) {
-      updates.push(`classification = $${pIdx++}`)
-      values.push(data.classification)
-    }
-    if (data.employmentType !== undefined) {
-      updates.push(`employment_type = $${pIdx++}`)
-      values.push(data.employmentType)
-    }
-    if (data.employmentStatus !== undefined) {
-      updates.push(`employment_status = $${pIdx++}`)
-      values.push(data.employmentStatus)
-    }
-    if (data.fundSource !== undefined) {
-      updates.push(`fund_source = $${pIdx++}`)
-      values.push(data.fundSource)
-    }
-    if (data.payBasis !== undefined) {
-      updates.push(`pay_basis = $${pIdx++}`)
-      values.push(data.payBasis)
-    }
-    if (data.supervisor !== undefined) {
-      updates.push(`supervisor = $${pIdx++}`)
-      values.push(data.supervisor)
-    }
-    if (data.appointmentStart !== undefined) {
-      updates.push(`appointment_start = $${pIdx++}`)
-      values.push(data.appointmentStart)
-    }
-    if (data.appointmentEnd !== undefined) {
-      updates.push(`appointment_end = $${pIdx++}`)
-      values.push(data.appointmentEnd)
-    }
-    if (data.assignments !== undefined) {
-      updates.push(`assignments = $${pIdx++}::jsonb`)
-      values.push(JSON.stringify(data.assignments))
-    }
-    if (data.history !== undefined) {
-      updates.push(`history = $${pIdx++}::jsonb`)
-      values.push(JSON.stringify(data.history))
-    }
-    if (data.username !== undefined) {
-      updates.push(`username = $${pIdx++}`)
-      values.push(data.username ? data.username.toLowerCase().trim() : null)
-    }
-    if (data.bankAccountNumber !== undefined) {
-      // Do not overwrite with asterisks if the client sends back the masked value
-      if (!data.bankAccountNumber.includes('*')) {
-        updates.push(`bank_account_number = $${pIdx++}`)
-        values.push(data.bankAccountNumber ? data.bankAccountNumber.trim() : null)
-      }
-    }
-    if (data.bankName !== undefined) {
-      updates.push(`bank_name = $${pIdx++}`)
-      values.push(data.bankName ? data.bankName.trim() : null)
-    }
-
-    if (updates.length === 0) return existing
-
-    values.push(existing.id)
+    const existing = await employeesService.findById(idOrEmpNo, { unmaskBank: true })
+    if (!existing || !existing.id) return undefined
 
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
-      const res = await client.query(
-        `UPDATE employees SET ${updates.join(', ')} WHERE id = $${pIdx} RETURNING *`,
-        values,
+
+      const empUpdates: string[] = []
+      const empValues: any[] = []
+      let pIdx = 1
+
+      if (data.name !== undefined) {
+        const { firstName, middleName, lastName } = splitFullName(data.name)
+        empUpdates.push(`first_name = $${pIdx++}`, `middle_name = $${pIdx++}`, `last_name = $${pIdx++}`)
+        empValues.push(firstName, middleName, lastName)
+      }
+
+      if (data.bankAccountNumber !== undefined && !data.bankAccountNumber.includes('*')) {
+        empUpdates.push(`bank_account_no = $${pIdx++}`)
+        empValues.push(data.bankAccountNumber ? data.bankAccountNumber.trim() : null)
+      }
+
+      const lookups = await resolveLookups(client, {
+        employmentStatus: data.employmentStatus ?? existing.employmentStatus,
+        office: data.office ?? existing.office,
+        fundSource: data.fundSource ?? existing.fundSource,
+        employmentType: data.employmentType ?? existing.employmentType,
+      })
+
+      if (data.employmentStatus !== undefined) {
+        empUpdates.push(`status_id = $${pIdx++}`)
+        empValues.push(lookups.statusId)
+      }
+
+      if (empUpdates.length > 0) {
+        empValues.push(existing.id)
+        await client.query(
+          `UPDATE employees SET ${empUpdates.join(', ')} WHERE id = $${pIdx}`,
+          empValues,
+        )
+      }
+
+      // Update latest appointment (or create one if none exists)
+      const latestAppt = await client.query(
+        `SELECT id FROM appointments WHERE employee_id = $1 ORDER BY effective_from DESC, id DESC LIMIT 1`,
+        [existing.id],
       )
-      const updated = mapEmployee(res.rows[0])
+
+      const position = data.position?.trim() || existing.position || 'Staff'
+      const payBasis = data.payBasis || existing.payBasis || 'Monthly'
+      const rate = parseFloat(data.applicableRate ?? existing.applicableRate) || 0
+      const monthlyRate = payBasis === 'Monthly' ? rate : null
+      const dailyRate = payBasis === 'Daily' ? rate : null
+      const hourlyRate = payBasis === 'Hourly' ? rate : null
+      const effectiveFrom = (data.appointmentStart ?? existing.appointmentStart) || new Date().toISOString().split('T')[0]
+      const effectiveTo = (data.appointmentEnd ?? existing.appointmentEnd) || null
+
+      if (latestAppt.rows.length > 0) {
+        await client.query(
+          `UPDATE appointments
+           SET office_id = $1,
+               cost_center_id = $2,
+               fund_id = $3,
+               employment_type_id = $4,
+               position_title = $5,
+               monthly_rate = $6,
+               daily_rate = $7,
+               hourly_rate = $8,
+               effective_from = $9::date,
+               effective_to = $10::date
+           WHERE id = $11`,
+          [
+            lookups.officeId,
+            lookups.costCenterId,
+            lookups.fundId,
+            lookups.employmentTypeId,
+            position,
+            monthlyRate,
+            dailyRate,
+            hourlyRate,
+            effectiveFrom,
+            effectiveTo,
+            latestAppt.rows[0].id,
+          ],
+        )
+      } else {
+        await client.query(
+          `INSERT INTO appointments (
+             employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+             position_title, monthly_rate, daily_rate, hourly_rate, effective_from, effective_to
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11::date)`,
+          [
+            existing.id,
+            lookups.officeId,
+            lookups.costCenterId,
+            lookups.fundId,
+            lookups.employmentTypeId,
+            position,
+            monthlyRate,
+            dailyRate,
+            hourlyRate,
+            effectiveFrom,
+            effectiveTo,
+          ],
+        )
+      }
 
       await auditService.logAction(
         actingUserId || null,
-        `Updated employee record for ${updated.name} (${updated.employeeId})`,
-        { employeeId: updated.id, employeeNo: updated.employeeId, updatedFields: Object.keys(data) },
+        `Updated employee record for ${data.name || existing.name} (${existing.employeeId})`,
+        { employeeId: existing.id, employeeNo: existing.employeeId, updatedFields: Object.keys(data) },
         ip || null,
+        'EMPLOYEE',
+        existing.id,
       )
 
       await client.query('COMMIT')
-      return updated
+      return employeesService.findById(String(existing.id))
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
@@ -340,11 +496,13 @@ export const employeesService = {
 
   async delete(idOrEmpNo: string, actingUserId?: number | null, ip?: string | null): Promise<boolean> {
     const existing = await employeesService.findById(idOrEmpNo)
-    if (!existing) return false
+    if (!existing || !existing.id) return false
 
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
+      // Clean up appointments before deleting employee (FK is ON DELETE RESTRICT)
+      await client.query(`DELETE FROM appointments WHERE employee_id = $1`, [existing.id])
       await client.query(`DELETE FROM employees WHERE id = $1`, [existing.id])
 
       await auditService.logAction(
@@ -352,6 +510,8 @@ export const employeesService = {
         `Deleted employee record for ${existing.name} (${existing.employeeId})`,
         { employeeId: existing.id, employeeNo: existing.employeeId },
         ip || null,
+        'EMPLOYEE',
+        existing.id,
       )
 
       await client.query('COMMIT')
