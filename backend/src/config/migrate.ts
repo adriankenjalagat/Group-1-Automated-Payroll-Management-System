@@ -421,6 +421,12 @@ export async function runMigrations(): Promise<void> {
     console.log('[Migration] Applying migration_phase_b.sql...')
     await client.query(readSqlFile('migration_phase_b.sql', MIGRATION_PHASE_B_SQL))
 
+    const v2Sql = readSqlFile('schema_v2_postgres.sql', '')
+    if (v2Sql.trim().length > 0) {
+      console.log('[Migration] Applying schema_v2_postgres.sql (43-table payroll_v2 schema)...')
+      await client.query(v2Sql)
+    }
+
     // 2. Ensure non-breaking compatibility columns between legacy queries and modern schema
     await client.query(`
       -- users compatibility (drop redundant user_id and account_id columns)
