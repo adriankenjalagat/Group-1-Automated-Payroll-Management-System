@@ -65,7 +65,7 @@ jobs:
           DB_NAME: Group-1-Automated-Payroll-Management-System
           DB_USER: postgres
           DB_PASSWORD: ci_postgres_password
-          JWT_SECRET: ci_test_jwt_secret_2026
+          JWT_SECRET: ci_test_jwt_secret_key_for_payroll_2026_secure
         run: npx tsx src/config/migrate.ts
 
       - name: Smoke test compiled server (/api/health & /api/auth/login)
@@ -77,7 +77,7 @@ jobs:
           DB_NAME: Group-1-Automated-Payroll-Management-System
           DB_USER: postgres
           DB_PASSWORD: ci_postgres_password
-          JWT_SECRET: ci_test_jwt_secret_2026
+          JWT_SECRET: ci_test_jwt_secret_key_for_payroll_2026_secure
         run: |
           node dist/server.js &
           SERVER_PID=$!
