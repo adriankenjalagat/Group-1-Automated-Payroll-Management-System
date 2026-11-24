@@ -1,4 +1,4 @@
-name: CI/CD Pipeline (Build, Test & Docker)
+name: CI/CD pipeline
 
 on:
   push:
