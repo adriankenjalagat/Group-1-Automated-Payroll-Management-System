@@ -60,64 +60,64 @@ async function runE2ESuite() {
 
   // 1. Admin
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-E2E-ADMIN', 'E2E Administrator', 'e2e_admin@test.msunaawan.edu.ph', 'e2e_admin', $1, 'IT Office', 'IT Office', ARRAY['System Administrator'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('E2E Administrator', 'e2e_admin@test.msunaawan.edu.ph', 'e2e_admin', $1, 'IT Office', 'IT Office', ARRAY['System Administrator'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw],
   )
 
   // 2. Science Cost Center Signatory
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-E2E-CCS-SCI', 'E2E Science Dean', 'e2e_sci@test.msunaawan.edu.ph', 'e2e_ccs_sci', $1, 'College of Science', 'College of Science', ARRAY['Cost Center Signatory'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('E2E Science Dean', 'e2e_sci@test.msunaawan.edu.ph', 'e2e_ccs_sci', $1, 'College of Science', 'College of Science', ARRAY['Cost Center Signatory'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw],
   )
 
   // 3. Engineering Cost Center Signatory
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-E2E-CCS-ENG', 'E2E Engineering Dean', 'e2e_eng@test.msunaawan.edu.ph', 'e2e_ccs_eng', $1, 'College of Engineering', 'College of Engineering', ARRAY['Cost Center Signatory'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('E2E Engineering Dean', 'e2e_eng@test.msunaawan.edu.ph', 'e2e_ccs_eng', $1, 'College of Engineering', 'College of Engineering', ARRAY['Cost Center Signatory'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw],
   )
 
   // 4. HR Office
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-E2E-HR', 'E2E HR Officer', 'e2e_hr@test.msunaawan.edu.ph', 'e2e_hr', $1, 'Human Resource Management Office', 'HR Office', ARRAY['HR Office'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('E2E HR Officer', 'e2e_hr@test.msunaawan.edu.ph', 'e2e_hr', $1, 'Human Resource Management Office', 'HR Office', ARRAY['HR Office'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw],
   )
 
   // 5. Regular Employee
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-E2E-EMP', 'E2E Regular Employee', 'e2e_emp@test.msunaawan.edu.ph', 'e2e_emp', $1, 'College of Science', 'College of Science', ARRAY['Employee'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('E2E Regular Employee', 'e2e_emp@test.msunaawan.edu.ph', 'e2e_emp', $1, 'College of Science', 'College of Science', ARRAY['Employee'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw],
   )
 
   // 6. Locked Account
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-E2E-LOCKED', 'E2E Locked User', 'e2e_locked@test.msunaawan.edu.ph', 'e2e_locked', $1, 'IT Office', 'IT Office', ARRAY['Employee'], 'locked')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('E2E Locked User', 'e2e_locked@test.msunaawan.edu.ph', 'e2e_locked', $1, 'IT Office', 'IT Office', ARRAY['Employee'], 'locked')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'locked'`,
     [hashedPw],
   )
 
   // 7. Pending Account
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-E2E-PENDING', 'E2E Pending User', 'e2e_pending@test.msunaawan.edu.ph', 'e2e_pending', $1, 'IT Office', 'IT Office', ARRAY['Employee'], 'pending')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('E2E Pending User', 'e2e_pending@test.msunaawan.edu.ph', 'e2e_pending', $1, 'IT Office', 'IT Office', ARRAY['Employee'], 'pending')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'pending'`,
     [hashedPw],
   )
 
   // 8. Cashier Account
   const cashierIns = await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-E2E-CASHIER', 'E2E Cashier Officer', 'e2e_cashier@test.msunaawan.edu.ph', 'e2e_cashier', $1, 'Cashier Office', 'Cashier Office', ARRAY['Cashier'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('E2E Cashier Officer', 'e2e_cashier@test.msunaawan.edu.ph', 'e2e_cashier', $1, 'Cashier Office', 'Cashier Office', ARRAY['Cashier'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'
      RETURNING id`,
     [hashedPw],

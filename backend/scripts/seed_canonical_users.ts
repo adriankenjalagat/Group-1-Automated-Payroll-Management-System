@@ -1,4 +1,4 @@
-﻿import path from 'path'
+import path from 'path'
 import dotenv from 'dotenv'
 import bcrypt from 'bcryptjs'
 import { Pool } from 'pg'
@@ -228,7 +228,7 @@ export async function seedCanonicalUsers(): Promise<void> {
 
       // Check for existing user account
       const existingUser = await client.query(
-        `SELECT id, account_id, username, email, password, roles, status, employee_id
+        `SELECT id, username, email, password, roles, status, employee_id
          FROM users
          WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2) LIMIT 1`,
         [def.username, def.email],
@@ -310,13 +310,12 @@ export async function seedCanonicalUsers(): Promise<void> {
         // Safe insertion of new canonical account
         const ins = await client.query(
           `INSERT INTO users (
-             account_id, name, email, username, password,
+             name, email, username, password,
              office, cost_center, roles, status, employee_id, created_at, updated_at
            ) VALUES (
-             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
            ) RETURNING id`,
           [
-            def.accountId,
             def.name,
             def.email,
             def.username,

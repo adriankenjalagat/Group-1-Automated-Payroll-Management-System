@@ -21,7 +21,6 @@ export interface UserAccount {
 
 type UserRow = {
   id: number
-  account_id: string | null
   name: string
   email: string
   username: string
@@ -52,7 +51,7 @@ function mapUser(row: UserRow): UserAccount {
 
   return {
     id: row.id,
-    accountId: row.account_id || `USR-${row.id}`,
+    accountId: `USR-${row.id}`,
     name: row.name || row.username,
     email: row.email,
     username: row.username,
@@ -69,14 +68,12 @@ function mapUser(row: UserRow): UserAccount {
 export const usersService = {
   async findAll(): Promise<UserAccount[]> {
     const result = await pool.query<UserRow>(
-      `SELECT COALESCE(id, user_id) as id,
-              COALESCE(account_id, 'USR-' || user_id) as account_id,
-              name, email, username,
+      `SELECT id, name, email, username,
               office, cost_center,
               COALESCE(roles, ARRAY[role]::text[]) as roles,
               status, employee_id, created_at, updated_at
        FROM users
-       ORDER BY COALESCE(id, user_id) ASC`,
+       ORDER BY id ASC`,
     )
 
     return result.rows.map(mapUser)
@@ -84,7 +81,7 @@ export const usersService = {
 
   async findById(id: number): Promise<UserAccount | undefined> {
     const result = await pool.query<UserRow>(
-      `SELECT id, account_id, name, email, username,
+      `SELECT id, name, email, username,
               office, cost_center, roles, status, employee_id, created_at, updated_at
        FROM users
        WHERE id = $1
@@ -104,7 +101,7 @@ export const usersService = {
     if (!cleanId) return undefined
 
     const result = await pool.query<UserRow>(
-      `SELECT id, account_id, name, email, username,
+      `SELECT id, name, email, username,
               password, office, cost_center, roles, status, employee_id, created_at, updated_at
        FROM users
        WHERE LOWER(username) = $1
@@ -178,64 +175,83 @@ export const usersService = {
     const finalRoles = validatedRoles.length > 0 ? validatedRoles : (['Employee'] as UserRole[])
     const primaryRole = finalRoles[0]
 
-    // Duplicate check for username
+    // Duplicate check for username and email
     const existingUser = await pool.query(
-      `SELECT id, user_id FROM users WHERE LOWER(username) = $1 LIMIT 1`,
-      [username],
+      `SELECT id, username, email FROM users WHERE LOWER(username) = $1 OR LOWER(email) = $2 LIMIT 1`,
+      [username, rawEmail],
     )
     if (existingUser.rows.length > 0) {
-      const err = new Error(`Username "${username}" is already taken.`)
+      const match = existingUser.rows[0]
+      const message =
+        match.username?.toLowerCase() === username
+          ? `Username "${username}" is already taken.`
+          : `Email "${rawEmail}" is already in use.`
+      const err = new Error(message)
       ;(err as any).statusCode = 409
       throw err
     }
 
-    // Resolve employeeId or automatically create a matching employee in employees table
+    // Resolve employeeId if provided
     let parsedEmployeeId: number | null = null
     if (data.employeeId !== undefined && data.employeeId !== null && data.employeeId !== '') {
       if (typeof data.employeeId === 'number') {
         parsedEmployeeId = data.employeeId
       } else {
         const empQuery = await pool.query(
-          `SELECT employee_id, id FROM employees WHERE id::text = $1 OR employee_id::text = $1 OR employee_no = $1 LIMIT 1`,
+          `SELECT id, employee_id FROM employees WHERE id::text = $1 OR employee_id::text = $1 OR employee_no = $1 LIMIT 1`,
           [String(data.employeeId)],
         )
         if (empQuery.rows.length > 0) {
-          parsedEmployeeId = empQuery.rows[0].employee_id || empQuery.rows[0].id
+          parsedEmployeeId = empQuery.rows[0].id || empQuery.rows[0].employee_id
         }
       }
     }
 
     const office = data.office?.trim() || 'University Office'
     const costCenter = data.costCenter?.trim() || office
-
-    // If no linked employee was specified, auto-create one so employee_id is never NULL
-    if (!parsedEmployeeId) {
-      const empRes = await pool.query(
-        `INSERT INTO employees (full_name, department, position, monthly_salary, payroll_type, status, created_at)
-         VALUES ($1, $2, $3, 25000.00, $4, 'Active', CURRENT_TIMESTAMP)
-         RETURNING employee_id`,
-        [name, office, primaryRole, primaryRole === 'Employee' ? 'Staff' : 'Permanent Staff'],
-      )
-      if (empRes.rows.length > 0) {
-        parsedEmployeeId = empRes.rows[0].employee_id
-        await pool.query(
-          `UPDATE employees SET id = $1, employee_no = $2 WHERE employee_id = $1`,
-          [parsedEmployeeId, `EMP-${String(parsedEmployeeId).padStart(3, '0')}`],
-        )
-      }
-    }
-
     const hashedPassword = await bcrypt.hash(rawPassword, 10)
 
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
 
+      // If no linked employee was specified, auto-create one inside the transaction so employee_id is never NULL
+      if (!parsedEmployeeId) {
+        const tempEmpNo = `EMP-TMP-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+        const empRes = await client.query(
+          `INSERT INTO employees (employee_no, full_name, department, position, monthly_salary, payroll_type, status, created_at)
+           VALUES ($1, $2, $3, $4, 25000.00, $5, 'Active', CURRENT_TIMESTAMP)
+           RETURNING id, employee_id`,
+          [
+            tempEmpNo,
+            name,
+            office,
+            primaryRole,
+            primaryRole === 'Employee' ? 'Staff' : 'Permanent Staff',
+          ],
+        )
+        if (empRes.rows.length > 0) {
+          parsedEmployeeId = empRes.rows[0].id || empRes.rows[0].employee_id
+          let finalEmpNo = `EMP-${String(parsedEmployeeId).padStart(3, '0')}`
+          const dupEmpNo = await client.query(
+            `SELECT 1 FROM employees WHERE employee_no = $1 AND COALESCE(id, employee_id) != $2 LIMIT 1`,
+            [finalEmpNo, parsedEmployeeId],
+          )
+          if (dupEmpNo.rows.length > 0) {
+            finalEmpNo = `${finalEmpNo}-${Date.now().toString().slice(-4)}`
+          }
+          await client.query(
+            `UPDATE employees SET id = $1, employee_id = $1, employee_no = $2 WHERE id = $1 OR employee_id = $1`,
+            [parsedEmployeeId, finalEmpNo],
+          )
+        }
+      }
+
       const result = await client.query<UserRow>(
         `INSERT INTO users
           (name, username, password, email, role, office, cost_center, roles, status, employee_id, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[], 'active', $9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-         RETURNING user_id, id, account_id, name, username, email, role,
+         RETURNING id, name, username, email, role,
                    office, cost_center, roles, status, employee_id, created_at, updated_at`,
         [
           name,
@@ -251,16 +267,7 @@ export const usersService = {
       )
 
       const row = result.rows[0]
-      const actualId = (row as any).user_id || row.id
-
-      // Sync id and account_id
-      await client.query(
-        `UPDATE users SET id = $1, account_id = 'USR-' || $1 WHERE user_id = $1`,
-        [actualId],
-      )
-
-      row.id = actualId
-      row.account_id = `USR-${actualId}`
+      const actualId = row.id
       const createdUser = mapUser(row)
 
       await client.query(
@@ -403,7 +410,7 @@ export const usersService = {
       UPDATE users
       SET ${updates.join(', ')}
       WHERE id = $${pIdx}
-      RETURNING id, account_id, name, username, email,
+      RETURNING id, name, username, email,
                 office, cost_center, roles, status, employee_id, created_at, updated_at
     `
 
@@ -447,7 +454,7 @@ export const usersService = {
       `UPDATE users
        SET status = $1, updated_at = CURRENT_TIMESTAMP
        WHERE id = $2
-       RETURNING id, account_id, name, username, email,
+       RETURNING id, name, username, email,
                  office, cost_center, roles, status, employee_id, created_at, updated_at`,
       [status, id],
     )

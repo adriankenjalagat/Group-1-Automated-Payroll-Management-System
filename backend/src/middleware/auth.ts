@@ -110,11 +110,10 @@ export async function authenticate(
 
     // Always recheck current user account status and permissions against PostgreSQL
     const userRes = await pool.query(
-      `SELECT id, account_id, name, email, username, office, cost_center, roles, status, employee_id
+      `SELECT id, name, email, username, office, cost_center, roles, status, employee_id
        FROM users
        WHERE id::text = $1 
           OR LOWER(username) = LOWER($2)
-          OR account_id = $1
        LIMIT 1`,
       [tokenSubject || '', tokenUsername || ''],
     )
@@ -145,7 +144,7 @@ export async function authenticate(
 
     req.user = {
       id: dbUser.id,
-      accountId: dbUser.account_id || `USR-${dbUser.id}`,
+      accountId: `USR-${dbUser.id}`,
       name: dbUser.name,
       email: dbUser.email,
       username: dbUser.username,

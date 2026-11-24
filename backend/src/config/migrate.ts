@@ -7,7 +7,6 @@ import { pool } from './db'
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
-    account_id VARCHAR(50),
     name VARCHAR(150) NOT NULL,
     email VARCHAR(150) UNIQUE NOT NULL,
     username VARCHAR(100) UNIQUE NOT NULL,
@@ -424,16 +423,14 @@ export async function runMigrations(): Promise<void> {
 
     // 2. Ensure non-breaking compatibility columns between legacy queries and modern schema
     await client.query(`
-      -- users compatibility
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS user_id INTEGER;
-      UPDATE users SET user_id = id WHERE user_id IS NULL;
+      -- users compatibility (drop redundant user_id and account_id columns)
+      ALTER TABLE users DROP COLUMN IF EXISTS user_id;
+      ALTER TABLE users DROP COLUMN IF EXISTS account_id;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(100);
       UPDATE users SET role = roles[1] WHERE role IS NULL AND array_length(roles, 1) > 0;
       UPDATE users SET role = 'Employee' WHERE role IS NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS cost_center VARCHAR(150);
       UPDATE users SET cost_center = COALESCE(office, 'Information Systems Office') WHERE cost_center IS NULL;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS account_id VARCHAR(50);
-      UPDATE users SET account_id = 'USR-' || id WHERE account_id IS NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS roles TEXT[];
       UPDATE users SET roles = ARRAY[role] WHERE roles IS NULL AND role IS NOT NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
@@ -480,17 +477,15 @@ export async function runMigrations(): Promise<void> {
         )
 
         // Create user record
-        const accId = `USR-${i + 1}`
         await client.query(
           `INSERT INTO users (
-            id, user_id, account_id, name, email, username, password,
+            id, name, email, username, password,
             office, cost_center, role, roles, status, employee_id, created_at, updated_at
           ) VALUES (
-            $1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active', $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
           )`,
           [
             empId,
-            accId,
             u.name,
             u.email,
             u.username,

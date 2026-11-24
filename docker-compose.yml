@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: payroll-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-Group-1-Automated-Payroll-Management-System}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-Group-1-Automated-Payroll-Management-System}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: payroll-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+      JWT_SECRET: ${JWT_SECRET:-msu_naawan_payroll_secret_key_2026_secure}
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-Group-1-Automated-Payroll-Management-System}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_MAX_POOL: ${DB_MAX_POOL:-10}
+      UPLOAD_DIR: ./uploads
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-10}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    volumes:
+      - backend_uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    container_name: payroll-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+
+volumes:
+  postgres_data:
+  backend_uploads:

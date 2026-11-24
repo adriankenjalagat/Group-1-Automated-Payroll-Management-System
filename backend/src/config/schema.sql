@@ -4,7 +4,6 @@
 -- 1. Users Table
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
-    account_id VARCHAR(50),
     name VARCHAR(150) NOT NULL,
     email VARCHAR(150) UNIQUE NOT NULL,
     username VARCHAR(100) UNIQUE NOT NULL,

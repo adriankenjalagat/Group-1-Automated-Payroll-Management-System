@@ -53,48 +53,48 @@ async function main() {
 
   // Ensure Admin
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-LIVE-ADMIN', 'Live Test Admin', 'liveadmin@test.msu', 'live_admin', $1, 'IT Office', 'IT Office', ARRAY['System Administrator'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('Live Test Admin', 'liveadmin@test.msu', 'live_admin', $1, 'IT Office', 'IT Office', ARRAY['System Administrator'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw]
   )
 
   // Ensure CCS User for Science
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-LIVE-CCS-SCI', 'Live CCS Science', 'ccssci@test.msu', 'live_ccs_sci', $1, 'College of Science', 'College of Science', ARRAY['Cost Center Signatory'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('Live CCS Science', 'ccssci@test.msu', 'live_ccs_sci', $1, 'College of Science', 'College of Science', ARRAY['Cost Center Signatory'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw]
   )
 
   // Ensure CCS User for Engineering
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-LIVE-CCS-ENG', 'Live CCS Eng', 'ccseng@test.msu', 'live_ccs_eng', $1, 'College of Engineering', 'College of Engineering', ARRAY['Cost Center Signatory'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('Live CCS Eng', 'ccseng@test.msu', 'live_ccs_eng', $1, 'College of Engineering', 'College of Engineering', ARRAY['Cost Center Signatory'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw]
   )
 
   // Ensure Employee User
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-LIVE-EMP', 'Live Employee', 'liveemp@test.msu', 'live_emp', $1, 'College of Science', 'College of Science', ARRAY['Employee'], 'active')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('Live Employee', 'liveemp@test.msu', 'live_emp', $1, 'College of Science', 'College of Science', ARRAY['Employee'], 'active')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'active'`,
     [hashedPw]
   )
 
   // Ensure Locked User
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-LIVE-LOCKED', 'Live Locked', 'locked@test.msu', 'live_locked', $1, 'IT Office', 'IT Office', ARRAY['Employee'], 'locked')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('Live Locked', 'locked@test.msu', 'live_locked', $1, 'IT Office', 'IT Office', ARRAY['Employee'], 'locked')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'locked'`,
     [hashedPw]
   )
 
   // Ensure Pending User
   await pool.query(
-    `INSERT INTO users (account_id, name, email, username, password, office, cost_center, roles, status)
-     VALUES ('USR-LIVE-PENDING', 'Live Pending', 'pending@test.msu', 'live_pending', $1, 'IT Office', 'IT Office', ARRAY['Employee'], 'pending')
+    `INSERT INTO users (name, email, username, password, office, cost_center, roles, status)
+     VALUES ('Live Pending', 'pending@test.msu', 'live_pending', $1, 'IT Office', 'IT Office', ARRAY['Employee'], 'pending')
      ON CONFLICT (username) DO UPDATE SET password = EXCLUDED.password, status = 'pending'`,
     [hashedPw]
   )
