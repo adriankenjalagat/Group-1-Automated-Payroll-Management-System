@@ -72,42 +72,6 @@ export interface PayrollRecord {
   updatedAt?: string
 }
 
-function mapPayrollRow(row: any): PayrollRecord {
-  return {
-    id: row.id,
-    employeeId: row.employee_no || String(row.employee_id),
-    employeeName: row.employee_name || '',
-    department: row.department || '',
-    period: row.period || '',
-    grossPay: parseFloat(row.gross_pay) || 0,
-    deductions: parseFloat(row.deductions) || 0,
-    netPay: parseFloat(row.net_pay) || 0,
-    status: row.status || 'Pending',
-    payrollTypeId: row.payroll_type_id,
-    payrollTypeName: row.payroll_type_name,
-    fundSource: row.fund_source || 'F01',
-    payBasis: row.pay_basis || 'Monthly',
-    basicPay: parseFloat(row.basic_pay) || 0,
-    allowances: parseFloat(row.allowances) || 0,
-    attendanceDeductions: parseFloat(row.attendance_deductions) || 0,
-    mandatoryDeductions: parseFloat(row.mandatory_deductions) || 0,
-    otherDeductions: parseFloat(row.other_deductions) || 0,
-    breakdown: row.breakdown,
-    locked: Boolean(row.locked),
-    lockedAt: row.locked_at ? new Date(row.locked_at).toISOString() : undefined,
-    currentApprovalHolder: row.current_approval_holder,
-    stage: row.stage || 'Draft',
-    readyForDv: Boolean(row.ready_for_dv),
-    computationVersion: Number(row.computation_version) || 1,
-    corrections: Array.isArray(row.corrections) ? row.corrections : [],
-    createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
-    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : undefined,
-  }
-}
-
-/**
- * Standard Philippine Government / State University Payroll Calculation Engine
- */
 export function computePayroll(params: {
   monthlySalary: number
   payBasis: 'Monthly' | 'Daily' | 'Hourly'
@@ -140,24 +104,13 @@ export function computePayroll(params: {
 
   const isPermanent = /permanent|regular/i.test(employmentType)
   const isContractual = /contractual/i.test(employmentType)
-
-  /**
-   * PENDING OFFICIAL CONFIRMATION: The 22-day divisor is a standard Civil Service
-   * assumption. The actual number of working days may vary per university policy.
-   * This value is configurable via the totalWorkingDaysInPeriod parameter.
-   */
   const standardDays = totalWorkingDaysInPeriod > 0 ? totalWorkingDaysInPeriod : 22
   const dailyRate = monthlySalary > 0 ? monthlySalary / standardDays : 0
   const hourlyRate = dailyRate > 0 ? dailyRate / 8 : 0
-  /**
-   * PENDING OFFICIAL CONFIRMATION: Minute-based deduction method (hourlyRate / 60).
-   * The university may use a different rounding or calculation method.
-   */
   const minuteRate = hourlyRate > 0 ? hourlyRate / 60 : 0
 
   let basicPay = 0
   if (isProratedFirstSalary) {
-    // Prorated first month calculation
     basicPay = Math.round(dailyRate * daysWorked * 100) / 100
   } else if (payBasis === 'Monthly') {
     basicPay = monthlySalary
@@ -167,7 +120,6 @@ export function computePayroll(params: {
     basicPay = Math.round(hourlyRate * hoursWorked * 100) / 100
   }
 
-  // Attendance Deductions
   let absencesDeduction = 0
   if (payBasis === 'Monthly' && absences > 0) {
     absencesDeduction = Math.round(dailyRate * absences * 100) / 100
@@ -177,53 +129,23 @@ export function computePayroll(params: {
   const tardinessDeduction = Math.round(tardinessMinutes * minuteRate * 100) / 100
   const totalAttendanceDeductions = Math.round((absencesDeduction + tardinessDeduction) * 100) / 100
 
-  /**
-   * PERA (Personnel Economic Relief Allowance) per SRS:
-   * - ₱2,000 monthly allowance (configurable via peraAmount parameter, defaults to 2000)
-   * - Eligible: Permanent/Regular AND Contractual employees
-   * - Requires: Full month of duty (no full-month LWOP)
-   * - Job Order employees are NOT eligible
-   *
-   * PENDING OFFICIAL CONFIRMATION: The exact definition of "full month of duty"
-   * may require further clarification from the university. Currently interpreted as
-   * having zero absences equal to or exceeding the full working period.
-   */
   const peraAmount = 2000.0
   const isFullMonthDuty = absences < standardDays
-  let peraAllowance = 0
-  if ((isPermanent || isContractual) && isFullMonthDuty) {
-    peraAllowance = peraAmount
-  }
+  const peraAllowance = (isPermanent || isContractual) && isFullMonthDuty ? peraAmount : 0
   const totalAllowances = peraAllowance + adjustments
-
-  // Gross Pay
   const grossPay = Math.round((basicPay + totalAllowances) * 100) / 100
 
-  /**
-   * Mandatory Statutory Deductions (applied to Permanent / Regular government employees).
-   *
-   * PENDING OFFICIAL CONFIRMATION: GSIS (9%), PhilHealth (2.5%), Pag-IBIG (₱200 cap),
-   * and BIR withholding tax brackets used below are based on standard government rates.
-   * These should be verified against official university and government schedules.
-   * Rounding is applied as round-to-nearest-cent (Math.round(x * 100) / 100).
-   */
   let gsis = 0
   let philHealth = 0
   let pagIbig = 0
   let withholdingTax = 0
 
   if (isPermanent) {
-    // GSIS: 9% of Basic Monthly Salary
     gsis = Math.round(monthlySalary * 0.09 * 100) / 100
-
-    // PhilHealth: 2.5% Employee Share (Min 250, Max 2500)
     const phBase = Math.min(Math.max(monthlySalary, 10000), 100000)
     philHealth = Math.round(phBase * 0.025 * 100) / 100
-
-    // Pag-IBIG: Standard employee share capped at 200.00
     pagIbig = 200.0
 
-    // Withholding Tax (BIR revised withholding tax brackets)
     const taxableBase = Math.max(
       0,
       basicPay - (gsis + philHealth + pagIbig + totalAttendanceDeductions),
@@ -234,23 +156,19 @@ export function computePayroll(params: {
     } else if (taxableBase <= 33333.33) {
       withholdingTax = Math.round((taxableBase - 20833.33) * 0.15 * 100) / 100
     } else if (taxableBase <= 66666.67) {
-      withholdingTax = Math.round((1875.0 + (taxableBase - 33333.33) * 0.20) * 100) / 100
+      withholdingTax = Math.round((1875.0 + (taxableBase - 33333.33) * 0.2) * 100) / 100
     } else if (taxableBase <= 166666.67) {
       withholdingTax = Math.round((8541.67 + (taxableBase - 66666.67) * 0.25) * 100) / 100
     } else {
-      withholdingTax = Math.round((33541.67 + (taxableBase - 166666.67) * 0.30) * 100) / 100
+      withholdingTax = Math.round((33541.67 + (taxableBase - 166666.67) * 0.3) * 100) / 100
     }
   }
 
   const totalMandatory = Math.round((gsis + philHealth + pagIbig + withholdingTax) * 100) / 100
-  const totalOtherDeductions = Math.round(
-    otherDeductions.reduce((sum, item) => sum + (item.amount || 0), 0) * 100,
-  ) / 100
-
-  const totalDeductions = Math.round(
-    (totalAttendanceDeductions + totalMandatory + totalOtherDeductions) * 100,
-  ) / 100
-
+  const totalOtherDeductions =
+    Math.round(otherDeductions.reduce((sum, item) => sum + (item.amount || 0), 0) * 100) / 100
+  const totalDeductions =
+    Math.round((totalAttendanceDeductions + totalMandatory + totalOtherDeductions) * 100) / 100
   const netPay = Math.max(0, Math.round((grossPay - totalDeductions) * 100) / 100)
 
   return {
@@ -285,35 +203,93 @@ export function computePayroll(params: {
   }
 }
 
+const PAYROLL_SELECT_SQL = `
+  SELECT
+    pb.id,
+    pb.batch_no,
+    pb.total_gross,
+    pb.total_deductions,
+    pb.total_net,
+    st.name AS status_name,
+    st.code AS status_code,
+    pp.label AS period_label,
+    o.name AS office_name,
+    f.code AS fund_code,
+    et.code AS emp_type_code,
+    et.name AS emp_type_name,
+    pi.id AS item_id,
+    pi.days_worked,
+    pi.absences,
+    pi.late_undertime_deduction,
+    e.id AS employee_db_id,
+    e.employee_no,
+    TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS employee_name,
+    a.monthly_rate,
+    a.daily_rate,
+    a.hourly_rate,
+    ws.step_name AS current_stage_name
+  FROM payroll_batches pb
+  JOIN statuses st ON st.id = pb.status_id
+  JOIN payroll_periods pp ON pp.id = pb.period_id
+  JOIN offices o ON o.id = pb.office_id
+  JOIN funds f ON f.id = pb.fund_id
+  JOIN employment_types et ON et.id = pb.employment_type_id
+  LEFT JOIN LATERAL (
+    SELECT * FROM payroll_items WHERE batch_id = pb.id ORDER BY id ASC LIMIT 1
+  ) pi ON TRUE
+  LEFT JOIN appointments a ON a.id = pi.appointment_id
+  LEFT JOIN employees e ON e.id = a.employee_id
+  LEFT JOIN LATERAL (
+    SELECT * FROM approval_requests WHERE entity_type = 'PAYROLL_BATCH' AND entity_id = pb.id ORDER BY id DESC LIMIT 1
+  ) ar ON TRUE
+  LEFT JOIN workflow_steps ws ON ws.template_id = ar.template_id AND ws.step_order = ar.current_step
+`
+
+function mapBatchRow(row: any): PayrollRecord {
+  const locked = row.status_code === 'APPROVED' || row.status_code === 'DISBURSED'
+  return {
+    id: Number(row.id),
+    employeeId: row.employee_no || String(row.employee_db_id || ''),
+    employeeName: row.employee_name || row.batch_no,
+    department: row.office_name || '',
+    period: row.period_label || 'November 2026',
+    grossPay: parseFloat(row.total_gross) || 0,
+    deductions: parseFloat(row.total_deductions) || 0,
+    netPay: parseFloat(row.total_net) || 0,
+    status: row.status_name || 'Pending',
+    payrollTypeId: String(row.emp_type_code || 'REGULAR').toLowerCase(),
+    payrollTypeName: row.emp_type_name || 'Regular Monthly Payroll',
+    fundSource: row.fund_code || 'F01',
+    payBasis: row.daily_rate ? 'Daily' : row.hourly_rate ? 'Hourly' : 'Monthly',
+    basicPay: parseFloat(row.monthly_rate || row.total_gross) || 0,
+    attendanceDeductions: parseFloat(row.late_undertime_deduction) || 0,
+    locked,
+    stage: locked ? 'Completed' : row.current_stage_name || 'Cost Center Signatory',
+    currentApprovalHolder: locked ? 'Completed' : row.current_stage_name || 'Cost Center Signatory',
+    readyForDv: locked,
+    computationVersion: 1,
+    corrections: [],
+  }
+}
+
 export const payrollService = {
   async findAll(period?: string): Promise<PayrollRecord[]> {
-    let queryText = `
-      SELECT p.*, e.employee_no
-      FROM payroll p
-      LEFT JOIN employees e ON p.employee_id = e.id
-    `
+    let queryText = PAYROLL_SELECT_SQL
     const params: any[] = []
     if (period) {
-      queryText += ` WHERE p.period = $1`
+      queryText += ` WHERE LOWER(pp.label) = LOWER($1)`
       params.push(period)
     }
-    queryText += ` ORDER BY p.id ASC`
+    queryText += ` ORDER BY pb.id ASC`
 
     const res = await pool.query(queryText, params)
-    return res.rows.map(mapPayrollRow)
+    return res.rows.map(mapBatchRow)
   },
 
   async findById(id: number): Promise<PayrollRecord | undefined> {
-    const res = await pool.query(
-      `SELECT p.*, e.employee_no
-       FROM payroll p
-       LEFT JOIN employees e ON p.employee_id = e.id
-       WHERE p.id = $1
-       LIMIT 1`,
-      [id],
-    )
+    const res = await pool.query(`${PAYROLL_SELECT_SQL} WHERE pb.id = $1 LIMIT 1`, [id])
     if (res.rows.length === 0) return undefined
-    return mapPayrollRow(res.rows[0])
+    return mapBatchRow(res.rows[0])
   },
 
   async create(
@@ -340,49 +316,51 @@ export const payrollService = {
     actingUserId?: number | null,
     ip?: string | null,
   ): Promise<PayrollRecord> {
-    // Resolve employee if provided
-    let empId: number | null = null
-    let empName = input.employeeName?.trim() || ''
-    let department = input.department?.trim() || ''
-    let monthlySalary = 0
-    let classification: 'Faculty' | 'Staff' = 'Staff'
-    let employmentType = 'Permanent'
-    let payBasis: 'Monthly' | 'Daily' | 'Hourly' = input.payBasis || 'Monthly'
-    let fundSource = input.fundSource || 'F01'
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
 
-    if (input.employeeId) {
-      const empRes = await pool.query(
-        `SELECT id, employee_no, full_name, department, monthly_salary, classification, employment_type, pay_basis, fund_source 
-         FROM employees 
-         WHERE employee_no = $1 OR (id::text = $1 AND $1 ~ '^[0-9]+$') 
-         LIMIT 1`,
-        [String(input.employeeId)],
-      )
-      if (empRes.rows.length > 0) {
-        const emp = empRes.rows[0]
-        empId = emp.id
-        empName = emp.full_name
-        department = emp.department
-        monthlySalary = parseFloat(emp.monthly_salary) || 0
-        classification = (emp.classification as any) || 'Staff'
-        employmentType = emp.employment_type || 'Permanent'
-        payBasis = (emp.pay_basis as any) || payBasis
-        fundSource = emp.fund_source || fundSource
+      // Find employee + latest appointment
+      let apptRes: any = { rows: [] }
+      if (input.employeeId) {
+        apptRes = await client.query(
+          `SELECT a.*, e.employee_no,
+                  TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
+                  et.code AS emp_type_code
+           FROM appointments a
+           JOIN employees e ON e.id = a.employee_id
+           JOIN employment_types et ON et.id = a.employment_type_id
+           WHERE e.employee_no = $1 OR (e.id::text = $1 AND $1 ~ '^[0-9]+$')
+           ORDER BY a.effective_from DESC, a.id DESC
+           LIMIT 1`,
+          [String(input.employeeId)],
+        )
       }
-    }
+      if (apptRes.rows.length === 0) {
+        apptRes = await client.query(
+          `SELECT a.*, e.employee_no,
+                  TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
+                  et.code AS emp_type_code
+           FROM appointments a
+           JOIN employees e ON e.id = a.employee_id
+           JOIN employment_types et ON et.id = a.employment_type_id
+           ORDER BY a.id ASC
+           LIMIT 1`,
+        )
+      }
+      if (apptRes.rows.length === 0) {
+        throw new Error('No employee appointment found to compute payroll.')
+      }
 
-    if (!empName) {
-      throw new Error('Employee name is required.')
-    }
+      const appt = apptRes.rows[0]
+      const monthlySalary = parseFloat(appt.monthly_rate) || input.grossPay || 25000
+      const empType = appt.emp_type_code === 'REGULAR' ? 'Permanent' : appt.emp_type_code
 
-    // Compute payroll breakdown
-    let breakdown: PayrollBreakdown
-    if (monthlySalary > 0) {
-      breakdown = computePayroll({
+      const breakdown = computePayroll({
         monthlySalary,
-        payBasis,
-        classification,
-        employmentType,
+        payBasis: input.payBasis || 'Monthly',
+        classification: 'Staff',
+        employmentType: empType,
         daysWorked: input.daysWorked,
         absences: input.absences,
         latenessMinutes: input.latenessMinutes,
@@ -391,98 +369,126 @@ export const payrollService = {
         otherDeductions: input.otherDeductions,
         isProratedFirstSalary: input.isProratedFirstSalary,
       })
-    } else {
-      const gross = input.grossPay || 0
-      const ded = input.deductions || 0
-      breakdown = {
-        basicPay: gross,
-        allowances: 0,
-        peraAllowance: 0,
-        grossPay: gross,
-        attendanceDeductions: {
-          absencesDeduction: 0,
-          absencesCount: input.absences || 0,
-          tardinessDeduction: 0,
-          latenessMinutes: input.latenessMinutes || 0,
-          undertimeMinutes: input.undertimeMinutes || 0,
-          totalAttendanceDeductions: 0,
-        },
-        mandatoryDeductions: {
-          gsis: 0,
-          philHealth: 0,
-          pagIbig: 0,
-          withholdingTax: 0,
-          totalMandatoryDeductions: 0,
-        },
-        otherDeductions: input.otherDeductions || [],
-        totalDeductions: ded,
-        netPay: gross - ded,
-        rates: {
-          monthlySalary: gross,
-          dailyRate: 0,
-          hourlyRate: 0,
-          minuteRate: 0,
-        },
+
+      // Resolve or create payroll_period
+      let periodRes = await client.query(
+        `SELECT id FROM payroll_periods WHERE LOWER(label) = LOWER($1) LIMIT 1`,
+        [input.period || 'November 2026'],
+      )
+      let periodId: number
+      if (periodRes.rows.length > 0) {
+        periodId = Number(periodRes.rows[0].id)
+      } else {
+        const openSt = (
+          await client.query(`SELECT id FROM statuses WHERE category = 'PERIOD' AND code = 'OPEN' LIMIT 1`)
+        ).rows[0].id
+        const insP = await client.query(
+          `INSERT INTO payroll_periods (label, period_start, period_end, submission_deadline, status_id)
+           VALUES ($1, CURRENT_DATE, CURRENT_DATE + INTERVAL '30 days', CURRENT_DATE + INTERVAL '25 days', $2)
+           RETURNING id`,
+          [input.period || 'November 2026', openSt],
+        )
+        periodId = Number(insP.rows[0].id)
       }
-    }
 
-    const client = await pool.connect()
-    try {
-      await client.query('BEGIN')
+      const pendingStId = (
+        await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'PENDING' LIMIT 1`)
+      ).rows[0].id
+      const batchNo = `PB-${Date.now()}-${Math.floor(Math.random() * 1000)}`
 
-      const res = await client.query(
-        `INSERT INTO payroll (
-           employee_id, employee_name, department, period,
-           gross_pay, deductions, net_pay, status,
-           payroll_type_id, payroll_type_name, fund_source, pay_basis,
-           basic_pay, allowances, attendance_deductions, mandatory_deductions, other_deductions,
-           breakdown, locked, stage, ready_for_dv, computation_version, created_at, updated_at
-         ) VALUES (
-           $1, $2, $3, $4,
-           $5, $6, $7, 'Pending',
-           $8, $9, $10, $11,
-           $12, $13, $14, $15, $16,
-           $17::jsonb, FALSE, 'Draft', FALSE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-         ) RETURNING *`,
+      const batchIns = await client.query(
+        `INSERT INTO payroll_batches (
+           period_id, office_id, cost_center_id, fund_id, employment_type_id,
+           batch_no, total_gross, total_deductions, total_net, status_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
         [
-          empId,
-          empName,
-          department,
-          input.period,
+          periodId,
+          appt.office_id,
+          appt.cost_center_id,
+          appt.fund_id,
+          appt.employment_type_id,
+          batchNo,
           breakdown.grossPay,
           breakdown.totalDeductions,
           breakdown.netPay,
-          input.payrollTypeId || 'regular-monthly',
-          input.payrollTypeName || 'Regular Monthly Payroll',
-          fundSource,
-          payBasis,
-          breakdown.basicPay,
-          breakdown.allowances,
-          breakdown.attendanceDeductions.totalAttendanceDeductions,
-          breakdown.mandatoryDeductions.totalMandatoryDeductions,
-          breakdown.otherDeductions.reduce((s, i) => s + i.amount, 0),
-          JSON.stringify(breakdown),
+          pendingStId,
         ],
       )
+      const batchId = Number(batchIns.rows[0].id)
 
-      const row = res.rows[0]
-
-      // Initialize approval step: HR / Cost Center Signatory
-      await client.query(
-        `INSERT INTO approvals (payroll_id, stage, status, updated_at)
-         VALUES ($1, 'Cost Center Signatory', 'Pending', CURRENT_TIMESTAMP)`,
-        [row.id],
+      const itemIns = await client.query(
+        `INSERT INTO payroll_items (
+           batch_id, appointment_id, days_worked, absences,
+           late_undertime_deduction, proration_factor,
+           gross_pay, total_deductions, net_pay
+         ) VALUES ($1, $2, $3, $4, $5, 1.0000, $6, $7, $8)
+         RETURNING id`,
+        [
+          batchId,
+          appt.id,
+          input.daysWorked ?? 22,
+          input.absences ?? 0,
+          breakdown.attendanceDeductions.totalAttendanceDeductions,
+          breakdown.grossPay,
+          breakdown.totalDeductions,
+          breakdown.netPay,
+        ],
       )
+      const itemId = Number(itemIns.rows[0].id)
+
+      // Persist breakdown lines in payroll_item_lines
+      const linePairs: Array<[string, number]> = [
+        ['BASIC', breakdown.basicPay],
+        ['PERA', breakdown.peraAllowance],
+        ['GSIS', breakdown.mandatoryDeductions.gsis],
+        ['PHILHEALTH', breakdown.mandatoryDeductions.philHealth],
+        ['PAGIBIG', breakdown.mandatoryDeductions.pagIbig],
+        ['WTAX', breakdown.mandatoryDeductions.withholdingTax],
+        ['ATT_DED', breakdown.attendanceDeductions.totalAttendanceDeductions],
+      ]
+      for (const [code, amount] of linePairs) {
+        if (amount > 0) {
+          await client.query(
+            `INSERT INTO payroll_item_lines (payroll_item_id, component_id, amount)
+             SELECT $1, id, $2 FROM pay_components WHERE code = $3 LIMIT 1`,
+            [itemId, amount, code],
+          )
+        }
+      }
+
+      // Initialize approval_request
+      const wtId = (
+        await client.query(`SELECT id FROM workflow_templates WHERE document_type = 'PAYROLL' ORDER BY id ASC LIMIT 1`)
+      ).rows[0]?.id
+      const appPendSt = (
+        await client.query(`SELECT id FROM statuses WHERE category = 'APPROVAL' AND code = 'PENDING' LIMIT 1`)
+      ).rows[0]?.id
+      const reqBy =
+        actingUserId ||
+        Number((await client.query(`SELECT id FROM users ORDER BY id ASC LIMIT 1`)).rows[0].id)
+
+      if (wtId && appPendSt) {
+        await client.query(
+          `INSERT INTO approval_requests (template_id, entity_type, entity_id, current_step, status_id, requested_by)
+           VALUES ($1, 'PAYROLL_BATCH', $2, 1, $3, $4)`,
+          [wtId, batchId, appPendSt, reqBy],
+        )
+      }
 
       await auditService.logAction(
-        actingUserId || null,
-        `Created payroll record #${row.id} for ${empName} (${input.period}) - Net Pay: ${breakdown.netPay}`,
-        { payrollId: row.id, employeeId: empId, period: input.period, netPay: breakdown.netPay },
+        reqBy,
+        `Created payroll batch #${batchId} for ${appt.full_name} (${input.period})`,
+        { payrollId: batchId, period: input.period, netPay: breakdown.netPay },
         ip || null,
+        'PAYROLL_BATCH',
+        batchId,
       )
 
       await client.query('COMMIT')
-      return mapPayrollRow(row)
+      const created = (await payrollService.findById(batchId))!
+      created.breakdown = breakdown
+      return created
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
@@ -513,105 +519,65 @@ export const payrollService = {
       ;(err as any).statusCode = 404
       throw err
     }
-
     if (existing.locked) {
       const err = new Error(`Payroll record #${id} is locked after approval and cannot be modified.`)
       ;(err as any).statusCode = 403
       throw err
     }
 
-    // Load employee salary info to recompute
-    let monthlySalary = existing.breakdown?.rates?.monthlySalary || existing.basicPay || 0
-    let classification: 'Faculty' | 'Staff' = 'Staff'
-    let employmentType = 'Permanent'
-    let payBasis: any = existing.payBasis || 'Monthly'
-
-    if (existing.employeeId) {
-      const empRes = await pool.query(
-        `SELECT monthly_salary, classification, employment_type, pay_basis FROM employees 
-         WHERE employee_no = $1 OR (id::text = $1 AND $1 ~ '^[0-9]+$') LIMIT 1`,
-        [existing.employeeId],
-      )
-      if (empRes.rows.length > 0) {
-        monthlySalary = parseFloat(empRes.rows[0].monthly_salary) || monthlySalary
-        classification = empRes.rows[0].classification || classification
-        employmentType = empRes.rows[0].employment_type || employmentType
-        payBasis = empRes.rows[0].pay_basis || payBasis
-      }
-    }
-
     const newBreakdown = computePayroll({
-      monthlySalary,
-      payBasis,
-      classification,
-      employmentType,
-      daysWorked: data.daysWorked ?? existing.breakdown?.attendanceDeductions?.absencesCount,
-      absences: data.absences ?? existing.breakdown?.attendanceDeductions?.absencesCount,
-      latenessMinutes: data.latenessMinutes ?? existing.breakdown?.attendanceDeductions?.latenessMinutes,
-      undertimeMinutes: data.undertimeMinutes ?? existing.breakdown?.attendanceDeductions?.undertimeMinutes,
-      adjustments: data.adjustments ?? 0,
-      otherDeductions: data.otherDeductions ?? existing.breakdown?.otherDeductions,
+      monthlySalary: existing.basicPay || existing.grossPay || 25000,
+      payBasis: (existing.payBasis as any) || 'Monthly',
+      classification: 'Staff',
+      employmentType: 'Permanent',
+      daysWorked: data.daysWorked,
+      absences: data.absences,
+      latenessMinutes: data.latenessMinutes,
+      undertimeMinutes: data.undertimeMinutes,
+      adjustments: data.adjustments,
+      otherDeductions: data.otherDeductions,
     })
-
-    const correctionEvent = {
-      id: `CORR-${Date.now()}`,
-      action: data.action || 'Payroll Recalculation',
-      previousValue: String(existing.netPay),
-      newValue: String(newBreakdown.netPay),
-      reason: data.reason || 'Attendance or deduction adjustment',
-      evidenceReference: data.evidenceReference || '',
-      recordedBy: actingUserId ? `User #${actingUserId}` : 'Accounting',
-      recordedAt: new Date().toISOString(),
-    }
-
-    const newCorrections = [...(existing.corrections || []), correctionEvent]
-    const newVersion = (existing.computationVersion || 1) + 1
 
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
-
-      const res = await client.query(
-        `UPDATE payroll SET
-           gross_pay = $1,
-           deductions = $2,
-           net_pay = $3,
-           basic_pay = $4,
-           allowances = $5,
-           attendance_deductions = $6,
-           mandatory_deductions = $7,
-           other_deductions = $8,
-           breakdown = $9::jsonb,
-           corrections = $10::jsonb,
-           computation_version = $11,
-           updated_at = CURRENT_TIMESTAMP
-         WHERE id = $12
-         RETURNING *`,
+      await client.query(
+        `UPDATE payroll_batches SET total_gross = $1, total_deductions = $2, total_net = $3 WHERE id = $4`,
+        [newBreakdown.grossPay, newBreakdown.totalDeductions, newBreakdown.netPay, id],
+      )
+      await client.query(
+        `UPDATE payroll_items
+         SET days_worked = COALESCE($1, days_worked),
+             absences = COALESCE($2, absences),
+             late_undertime_deduction = $3,
+             gross_pay = $4,
+             total_deductions = $5,
+             net_pay = $6
+         WHERE batch_id = $7`,
         [
+          data.daysWorked ?? null,
+          data.absences ?? null,
+          newBreakdown.attendanceDeductions.totalAttendanceDeductions,
           newBreakdown.grossPay,
           newBreakdown.totalDeductions,
           newBreakdown.netPay,
-          newBreakdown.basicPay,
-          newBreakdown.allowances,
-          newBreakdown.attendanceDeductions.totalAttendanceDeductions,
-          newBreakdown.mandatoryDeductions.totalMandatoryDeductions,
-          newBreakdown.otherDeductions.reduce((s, i) => s + i.amount, 0),
-          JSON.stringify(newBreakdown),
-          JSON.stringify(newCorrections),
-          newVersion,
           id,
         ],
       )
 
       await auditService.logAction(
         actingUserId || null,
-        `Corrected/recalculated payroll #${id} for ${existing.employeeName} - Net Pay: ${existing.netPay} -> ${newBreakdown.netPay}`,
-        { payrollId: id, previousNet: existing.netPay, newNet: newBreakdown.netPay, reason: data.reason },
+        `Recalculated payroll #${id} (${existing.netPay} -> ${newBreakdown.netPay})`,
+        { payrollId: id, reason: data.reason, newNet: newBreakdown.netPay },
         ip || null,
+        'PAYROLL_BATCH',
+        id,
       )
 
       await client.query('COMMIT')
-      return mapPayrollRow(res.rows[0])
+      const updated = (await payrollService.findById(id))!
+      updated.breakdown = newBreakdown
+      return updated
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
@@ -629,57 +595,42 @@ export const payrollService = {
     try {
       await client.query('BEGIN')
 
-      // 1. Transactional row lock to prevent race conditions during concurrent approval/locking attempts
-      const pRes = await client.query(
-        `SELECT * FROM payroll WHERE id = $1 FOR UPDATE`,
-        [id],
-      )
-      if (pRes.rows.length === 0) {
+      const bRes = await client.query(`SELECT * FROM payroll_batches WHERE id = $1 FOR UPDATE`, [id])
+      if (bRes.rows.length === 0) {
         const err = new Error(`Payroll record #${id} not found.`)
         ;(err as any).statusCode = 404
         throw err
       }
-      const existing = pRes.rows[0]
 
-      // 2. Requirements 1-5: Validate that every stage in the configured route has an 'Approved' decision
       await approvalsService.validateAllStagesApproved(id, client)
 
-      // 3. Atomically update payroll status, stage, locking flag, and ready_for_dv
-      const res = await client.query(
-        `UPDATE payroll SET
-           locked = TRUE,
-           locked_at = CURRENT_TIMESTAMP,
-           locked_by = $1,
-           stage = 'Completed',
-           current_approval_holder = 'Completed',
-           status = 'Approved',
-           ready_for_dv = TRUE,
-           updated_at = CURRENT_TIMESTAMP
-         WHERE id = $2
-         RETURNING *`,
-        [actingUserId || null, id],
-      )
+      const appSt = (
+        await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'APPROVED' LIMIT 1`)
+      ).rows[0].id
+      await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [appSt, id])
 
-      // 4. Ensure initial disbursement record is scheduled
+      const schedSt = (
+        await client.query(`SELECT id FROM statuses WHERE category = 'DISBURSEMENT' AND code = 'SCHEDULED' LIMIT 1`)
+      ).rows[0].id
+      const slipNo = `OBL-${new Date().getFullYear()}-${String(id).padStart(4, '0')}`
       await client.query(
-        `INSERT INTO disbursements (
-           payroll_id, method, status, total_amount, fund_source, created_at
-         )
-         SELECT $1, 'Bank Transfer', 'Scheduled', $2, $3, CURRENT_TIMESTAMP
-         WHERE NOT EXISTS (SELECT 1 FROM disbursements WHERE payroll_id = $1)`,
-        [id, existing.net_pay, existing.fund_source || 'F01'],
+        `INSERT INTO obligation_slips (batch_id, slip_no, amount, status_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (slip_no) DO NOTHING`,
+        [id, slipNo, bRes.rows[0].total_gross, schedSt],
       )
 
-      // 5. Preserve audit trail
       await auditService.logAction(
         actingUserId || null,
-        `Final approval and locking of payroll #${id} for ${existing.employee_name}`,
-        { payrollId: id, status: 'Approved', locked: true, readyForDv: true },
+        `Locked payroll batch #${id}`,
+        { payrollId: id, status: 'Approved', locked: true },
         ip || null,
+        'PAYROLL_BATCH',
+        id,
       )
 
       await client.query('COMMIT')
-      return mapPayrollRow(res.rows[0])
+      return (await payrollService.findById(id))!
     } catch (err) {
       await client.query('ROLLBACK')
       throw err

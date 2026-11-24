@@ -4,387 +4,153 @@ import path from 'path'
 import bcrypt from 'bcryptjs'
 import { pool } from './db'
 
-export const SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(150) NOT NULL,
-    email VARCHAR(150) UNIQUE NOT NULL,
-    username VARCHAR(100) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
-    office VARCHAR(150),
-    roles TEXT[] NOT NULL DEFAULT '{"Employee"}',
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS employees (
-    id SERIAL PRIMARY KEY,
-    employee_no VARCHAR(50) UNIQUE NOT NULL,
-    full_name VARCHAR(150) NOT NULL,
-    department VARCHAR(150) NOT NULL,
-    position VARCHAR(100) NOT NULL,
-    monthly_salary NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS payroll (
-    id SERIAL PRIMARY KEY,
-    employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
-    employee_name VARCHAR(150) NOT NULL,
-    department VARCHAR(150) NOT NULL,
-    period VARCHAR(50) NOT NULL,
-    gross_pay NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    deductions NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    net_pay NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    status VARCHAR(50) NOT NULL DEFAULT 'Pending',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS attendance (
-    id SERIAL PRIMARY KEY,
-    employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
-    period VARCHAR(50) NOT NULL,
-    days_worked INTEGER NOT NULL DEFAULT 0,
-    absences INTEGER NOT NULL DEFAULT 0,
-    verified_by_supervisor BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS attachments (
-    id SERIAL PRIMARY KEY,
-    employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
-    document_type VARCHAR(100) NOT NULL,
-    file_name VARCHAR(255) NOT NULL,
-    file_path VARCHAR(255),
-    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS approvals (
-    id SERIAL PRIMARY KEY,
-    payroll_id INTEGER REFERENCES payroll(id) ON DELETE CASCADE,
-    stage VARCHAR(50) NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'Pending',
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS disbursements (
-    id SERIAL PRIMARY KEY,
-    payroll_id INTEGER REFERENCES payroll(id) ON DELETE CASCADE,
-    method VARCHAR(50) NOT NULL DEFAULT 'Bank Transfer',
-    status VARCHAR(50) NOT NULL DEFAULT 'Scheduled',
-    released_at TIMESTAMP WITH TIME ZONE
-);
-
-CREATE TABLE IF NOT EXISTS payslips (
-    id SERIAL PRIMARY KEY,
-    employee_id INTEGER REFERENCES employees(id) ON DELETE CASCADE,
-    period VARCHAR(50) NOT NULL,
-    gross_pay NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    deductions NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    net_pay NUMERIC(12, 2) NOT NULL DEFAULT 0.00,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS audit_logs (
-    log_id SERIAL PRIMARY KEY,
-    user_id INTEGER,
-    action VARCHAR(255) NOT NULL,
-    logged_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-`
-
-export const MIGRATION_SQL = `
--- 1. Users Table Enhancements
-ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id INTEGER REFERENCES employees(id) ON DELETE SET NULL;
-ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-
--- 2. Employees Table Enhancements
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS classification VARCHAR(50) DEFAULT 'Staff';
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) DEFAULT 'Permanent';
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS employment_status VARCHAR(50) DEFAULT 'Active';
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS fund_source VARCHAR(20) DEFAULT 'F01';
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS pay_basis VARCHAR(20) DEFAULT 'Monthly';
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS supervisor VARCHAR(150);
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS appointment_start VARCHAR(50);
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS appointment_end VARCHAR(50);
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS assignments JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS history JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS username VARCHAR(100);
-
--- 3. Attendance Table Enhancements
-ALTER TABLE attendance ADD COLUMN IF NOT EXISTS hours_worked NUMERIC(6, 2) DEFAULT 0.00;
-ALTER TABLE attendance ADD COLUMN IF NOT EXISTS lateness_minutes INTEGER DEFAULT 0;
-ALTER TABLE attendance ADD COLUMN IF NOT EXISTS undertime_minutes INTEGER DEFAULT 0;
-ALTER TABLE attendance ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Pending';
-ALTER TABLE attendance ADD COLUMN IF NOT EXISTS supervisor_remarks TEXT;
-ALTER TABLE attendance ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE attendance ADD COLUMN IF NOT EXISTS verified_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
-ALTER TABLE attendance ADD COLUMN IF NOT EXISTS concerns JSONB DEFAULT '[]'::jsonb;
-
--- 4. Attachments / Submissions Enhancements
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS submission_code VARCHAR(50);
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS payroll_type VARCHAR(100);
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS period VARCHAR(50);
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Submitted';
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS remarks TEXT;
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS versions JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS supervisor_validation JSONB;
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS hr_verification JSONB;
-
--- 5. Payroll Table Enhancements
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS payroll_type_id VARCHAR(100);
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS payroll_type_name VARCHAR(150);
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS fund_source VARCHAR(20) DEFAULT 'F01';
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS pay_basis VARCHAR(20) DEFAULT 'Monthly';
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS basic_pay NUMERIC(12, 2) DEFAULT 0.00;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS allowances NUMERIC(12, 2) DEFAULT 0.00;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS attendance_deductions NUMERIC(12, 2) DEFAULT 0.00;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS mandatory_deductions NUMERIC(12, 2) DEFAULT 0.00;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS other_deductions NUMERIC(12, 2) DEFAULT 0.00;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS breakdown JSONB DEFAULT '{}'::jsonb;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS locked BOOLEAN DEFAULT FALSE;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS locked_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS locked_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS current_approval_holder VARCHAR(100);
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS stage VARCHAR(50) DEFAULT 'Draft';
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS ready_for_dv BOOLEAN DEFAULT FALSE;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS computation_version INTEGER DEFAULT 1;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS corrections JSONB DEFAULT '[]'::jsonb;
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-
--- 6. Approvals Table Enhancements
-ALTER TABLE approvals ADD COLUMN IF NOT EXISTS approver_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
-ALTER TABLE approvals ADD COLUMN IF NOT EXISTS approver_role VARCHAR(100);
-ALTER TABLE approvals ADD COLUMN IF NOT EXISTS approver_name VARCHAR(150);
-ALTER TABLE approvals ADD COLUMN IF NOT EXISTS cost_center VARCHAR(150);
-ALTER TABLE approvals ADD COLUMN IF NOT EXISTS remarks TEXT;
-ALTER TABLE approvals ADD COLUMN IF NOT EXISTS action VARCHAR(50);
-ALTER TABLE approvals ADD COLUMN IF NOT EXISTS sequence INTEGER DEFAULT 1;
-
--- 7. Disbursements Table Enhancements
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS dv_number VARCHAR(100);
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS fund_source VARCHAR(20) DEFAULT 'F01';
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS budget_document_type VARCHAR(50);
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS budget_document_number VARCHAR(100);
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS journal_entry JSONB;
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS ada_adca_number VARCHAR(100);
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS bank_upload_filename VARCHAR(255);
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12, 2) DEFAULT 0.00;
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS disbursed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
-ALTER TABLE disbursements ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-
--- 8. Payslips Table Enhancements
-ALTER TABLE payslips ADD COLUMN IF NOT EXISTS payroll_id INTEGER REFERENCES payroll(id) ON DELETE SET NULL;
-ALTER TABLE payslips ADD COLUMN IF NOT EXISTS payroll_title VARCHAR(150);
-ALTER TABLE payslips ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Pending';
-ALTER TABLE payslips ADD COLUMN IF NOT EXISTS released_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE payslips ADD COLUMN IF NOT EXISTS released_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
-ALTER TABLE payslips ADD COLUMN IF NOT EXISTS breakdown JSONB DEFAULT '{}'::jsonb;
-
--- 9. Audit Logs Table Enhancements
-ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details JSONB;
-ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(50);
-`
-
-export const MIGRATION_PHASE2_SQL = `
--- 1. Explicit Cost Center Columns
-ALTER TABLE users ADD COLUMN IF NOT EXISTS cost_center VARCHAR(150);
-ALTER TABLE payroll ADD COLUMN IF NOT EXISTS cost_center VARCHAR(150);
-
-UPDATE users SET cost_center = office WHERE cost_center IS NULL AND office IS NOT NULL;
-UPDATE payroll SET cost_center = department WHERE cost_center IS NULL AND department IS NOT NULL;
-
--- 2. Configurable Approval Routing Table
-CREATE TABLE IF NOT EXISTS approval_routes (
-    id SERIAL PRIMARY KEY,
-    payroll_type_id VARCHAR(100) DEFAULT '*',
-    fund_source VARCHAR(20) DEFAULT '*',
-    cost_center VARCHAR(150) DEFAULT '*',
-    stage_name VARCHAR(100) NOT NULL,
-    sequence_order INTEGER NOT NULL,
-    required_role VARCHAR(100) NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-INSERT INTO approval_routes (payroll_type_id, fund_source, cost_center, stage_name, sequence_order, required_role, is_active)
-SELECT '*', '*', '*', 'Cost Center Signatory', 1, 'Cost Center Signatory', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM approval_routes WHERE stage_name = 'Cost Center Signatory' AND sequence_order = 1);
-
-INSERT INTO approval_routes (payroll_type_id, fund_source, cost_center, stage_name, sequence_order, required_role, is_active)
-SELECT '*', '*', '*', 'HR Office', 2, 'HR Office', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM approval_routes WHERE stage_name = 'HR Office' AND sequence_order = 2);
-
-INSERT INTO approval_routes (payroll_type_id, fund_source, cost_center, stage_name, sequence_order, required_role, is_active)
-SELECT '*', '*', '*', 'Accounting', 3, 'Accounting', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM approval_routes WHERE stage_name = 'Accounting' AND sequence_order = 3);
-
-INSERT INTO approval_routes (payroll_type_id, fund_source, cost_center, stage_name, sequence_order, required_role, is_active)
-SELECT '*', '*', '*', 'Budget Office', 4, 'Budget Office', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM approval_routes WHERE stage_name = 'Budget Office' AND sequence_order = 4);
-
-INSERT INTO approval_routes (payroll_type_id, fund_source, cost_center, stage_name, sequence_order, required_role, is_active)
-SELECT '*', '*', '*', 'Office of the Chancellor', 5, 'Office of the Chancellor', TRUE
-WHERE NOT EXISTS (SELECT 1 FROM approval_routes WHERE stage_name = 'Office of the Chancellor' AND sequence_order = 5);
-
--- 3. File Attachments Metadata
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS mime_type VARCHAR(100);
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS file_size_bytes BIGINT;
-ALTER TABLE attachments ADD COLUMN IF NOT EXISTS storage_filename VARCHAR(255);
-`
-
-export const MIGRATION_PHASE_B_SQL = `
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_account_number VARCHAR(50);
-ALTER TABLE employees ADD COLUMN IF NOT EXISTS bank_name VARCHAR(100) DEFAULT 'LandBank';
-`
-
 const DEFAULT_SEED_USERS = [
   {
-    name: 'Ramon Bautista',
+    firstName: 'Ramon',
+    lastName: 'Bautista',
     username: 'rbautista',
     email: 'ramon.bautista@msunaawan.example',
-    role: 'System Administrator',
     roles: ['System Administrator'],
+    officeCode: 'ISO',
     office: 'Information Systems Office',
-    costCenter: 'Information Systems Office',
-    classification: 'Staff',
     position: 'IT Director / System Admin',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Eyrol Clayford Junio',
+    firstName: 'Eyrol Clayford',
+    lastName: 'Junio',
     username: 'eyrolclayford.junio',
     email: 'eyrolclayford.junio@msunaawan.example',
-    role: 'System Administrator',
     roles: ['System Administrator'],
+    officeCode: 'ISO',
     office: 'Information Systems Office',
-    costCenter: 'Information Systems Office',
-    classification: 'Staff',
     position: 'System Administrator',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Eyrol Junio',
+    firstName: 'Eyrol',
+    lastName: 'Junio',
     username: 'eyrol.junio',
     email: 'eyrol.junio@msunaawan.example',
-    role: 'System Administrator',
     roles: ['System Administrator'],
+    officeCode: 'ISO',
     office: 'Information Systems Office',
-    costCenter: 'Information Systems Office',
-    classification: 'Faculty',
     position: 'Faculty Administrator',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Engkoy Junio',
+    firstName: 'Engkoy',
+    lastName: 'Junio',
     username: 'engkoy.junio',
     email: 'engkoy.junio@msunaawan.example',
-    role: 'Employee',
     roles: ['Employee'],
+    officeCode: 'COF',
     office: 'College of Fisheries',
-    costCenter: 'College of Fisheries',
-    classification: 'Staff',
     position: 'Laboratory Staff',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Ana Villanueva',
+    firstName: 'Ana',
+    lastName: 'Villanueva',
     username: 'avillanueva',
     email: 'ana.villanueva@msunaawan.example',
-    role: 'HR Office',
     roles: ['HR Office'],
+    officeCode: 'HRO',
     office: 'Human Resource Office',
-    costCenter: 'Human Resource Office',
-    classification: 'Staff',
     position: 'HR Officer',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Jose Dela Cruz',
+    firstName: 'Jose',
+    lastName: 'Dela Cruz',
     username: 'jdelacruz',
     email: 'jose.delacruz@msunaawan.example',
-    role: 'Accounting',
     roles: ['Accounting'],
+    officeCode: 'ACCT',
     office: 'Accounting Office',
-    costCenter: 'Accounting Office',
-    classification: 'Staff',
     position: 'Senior Accountant',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Fictional Accountant User',
+    firstName: 'Fictional',
+    lastName: 'Accountant',
     username: 'accountant.demo',
     email: 'fictional.accountant@msunaawan.example',
-    role: 'Accountant',
     roles: ['Accountant'],
-    office: 'Accountant Review Office',
-    costCenter: 'Accountant Review Office',
-    classification: 'Staff',
+    officeCode: 'ACCT',
+    office: 'Accounting Office',
     position: 'Staff Accountant',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Elena Torres',
+    firstName: 'Elena',
+    lastName: 'Torres',
     username: 'etorres',
     email: 'elena.torres@msunaawan.example',
-    role: 'Cost Center Signatory',
     roles: ['Cost Center Signatory'],
+    officeCode: 'COF',
     office: 'College of Fisheries',
-    costCenter: 'College of Fisheries',
-    classification: 'Faculty',
     position: 'Dean / Cost Center Head',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Marco Lim',
+    firstName: 'Marco',
+    lastName: 'Lim',
     username: 'mlim',
     email: 'marco.lim@msunaawan.example',
-    role: 'Budget Office',
     roles: ['Budget Office'],
+    officeCode: 'BUDGET',
     office: 'Budget Office',
-    costCenter: 'Budget Office',
-    classification: 'Staff',
     position: 'Budget Officer',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Dr. Teresa Navarro',
+    firstName: 'Teresa',
+    lastName: 'Navarro',
     username: 'tnavarro',
     email: 'teresa.navarro@msunaawan.example',
-    role: 'Office of the Chancellor',
     roles: ['Office of the Chancellor'],
+    officeCode: 'OOTC',
     office: 'Office of the Chancellor',
-    costCenter: 'Office of the Chancellor',
-    classification: 'Faculty',
     position: 'Campus Chancellor',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Carlo Aquino',
+    firstName: 'Carlo',
+    lastName: 'Aquino',
     username: 'caquino',
     email: 'carlo.aquino@msunaawan.example',
-    role: 'Cashier',
     roles: ['Cashier'],
+    officeCode: 'CASH',
     office: 'Cashier Office',
-    costCenter: 'Cashier Office',
-    classification: 'Staff',
     position: 'Disbursing Officer / Cashier',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Alex Rivera',
+    firstName: 'Alex',
+    lastName: 'Rivera',
     username: 'arivera',
     email: 'alex.supervisor@demo.invalid',
-    role: 'Immediate Supervisor',
     roles: ['Immediate Supervisor'],
+    officeCode: 'COF',
     office: 'College of Fisheries',
-    costCenter: 'College of Fisheries',
-    classification: 'Faculty',
     position: 'Department Chairperson',
+    empTypeCode: 'REGULAR',
   },
   {
-    name: 'Maria Santos',
+    firstName: 'Maria',
+    lastName: 'Santos',
     username: 'msantos',
     email: 'maria.santos@demo.invalid',
-    role: 'Employee',
     roles: ['Employee'],
+    officeCode: 'ISO',
     office: 'Information Systems Office',
-    costCenter: 'Information Systems Office',
-    classification: 'Staff',
     position: 'Administrative Aide',
+    empTypeCode: 'REGULAR',
   },
 ]
 
-function readSqlFile(filename: string, fallback: string): string {
+function readSqlFile(filename: string): string {
   const candidatePaths = [
     path.resolve(__dirname, filename),
     path.resolve(__dirname, '../../src/config', filename),
@@ -399,7 +165,7 @@ function readSqlFile(filename: string, fallback: string): string {
     }
   }
 
-  return fallback
+  throw new Error(`Required SQL file not found: ${filename}`)
 }
 
 export async function runMigrations(): Promise<void> {
@@ -408,108 +174,273 @@ export async function runMigrations(): Promise<void> {
   try {
     await client.query('BEGIN')
 
-    // 1. Run schema and all migration files in order FIRST to ensure all tables exist
-    console.log('[Migration] Applying schema.sql...')
-    await client.query(readSqlFile('schema.sql', SCHEMA_SQL))
+    // 1. Clean up temporary payroll_v2 schema if present
+    await client.query(`DROP SCHEMA IF EXISTS payroll_v2 CASCADE;`)
 
-    console.log('[Migration] Applying migration.sql...')
-    await client.query(readSqlFile('migration.sql', MIGRATION_SQL))
-
-    console.log('[Migration] Applying migration_phase2.sql...')
-    await client.query(readSqlFile('migration_phase2.sql', MIGRATION_PHASE2_SQL))
-
-    console.log('[Migration] Applying migration_phase_b.sql...')
-    await client.query(readSqlFile('migration_phase_b.sql', MIGRATION_PHASE_B_SQL))
-
-    // 2. Ensure non-breaking compatibility columns between legacy queries and modern schema
-    await client.query(`
-      -- users compatibility (drop redundant user_id and account_id columns)
-      ALTER TABLE users DROP COLUMN IF EXISTS user_id;
-      ALTER TABLE users DROP COLUMN IF EXISTS account_id;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(100);
-      UPDATE users SET role = roles[1] WHERE role IS NULL AND array_length(roles, 1) > 0;
-      UPDATE users SET role = 'Employee' WHERE role IS NULL;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS cost_center VARCHAR(150);
-      UPDATE users SET cost_center = COALESCE(office, 'Information Systems Office') WHERE cost_center IS NULL;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS roles TEXT[];
-      UPDATE users SET roles = ARRAY[role] WHERE roles IS NULL AND role IS NOT NULL;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-
-      -- employees compatibility
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS employee_id INTEGER;
-      UPDATE employees SET employee_id = id WHERE employee_id IS NULL;
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS payroll_type VARCHAR(100) DEFAULT 'Permanent Staff';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'Active';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS classification VARCHAR(50) DEFAULT 'Staff';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) DEFAULT 'Permanent';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS employment_status VARCHAR(50) DEFAULT 'Active';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS fund_source VARCHAR(20) DEFAULT 'F01';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS pay_basis VARCHAR(20) DEFAULT 'Monthly';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS department VARCHAR(150) DEFAULT 'Information Systems Office';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS position VARCHAR(100) DEFAULT 'Staff';
-      ALTER TABLE employees ADD COLUMN IF NOT EXISTS monthly_salary NUMERIC(12, 2) DEFAULT 25000.00;
+    // 2. Detect legacy 11-table schema (identified by legacy `users.password` column or `payroll` table)
+    //    and replace cleanly with the 43-table normalized schema in `public`
+    const legacyCheck = await client.query(`
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'users'
+        AND column_name = 'password'
+      UNION
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('payroll', 'approval_routes', 'approvals', 'disbursements', 'attendance', 'attachments')
+      LIMIT 1
     `)
 
-    // 3. Seed initial users and employees if the users table is empty
-    const userCountRes = await client.query('SELECT COUNT(*)::int as count FROM users')
+    if (legacyCheck.rows.length > 0) {
+      console.log('[Migration] Detected legacy 11-table schema. Dropping legacy tables to install 43-table schema...')
+      await client.query(`
+        DROP TABLE IF EXISTS
+          approval_routes,
+          approvals,
+          disbursements,
+          payslips,
+          attendance,
+          attachments,
+          payroll,
+          audit_logs,
+          users,
+          employees
+        CASCADE;
+      `)
+    }
+
+    // 3. Apply the 43-table normalized PostgreSQL schema directly in `public`
+    console.log('[Migration] Applying 43-table normalized schema.sql...')
+    await client.query(readSqlFile('schema.sql'))
+
+    // 4. Seed required lookup & reference data (idempotent)
+    await client.query(`
+      INSERT INTO employment_types (code, name) VALUES
+        ('REGULAR', 'Regular / Permanent'),
+        ('CONTRACTUAL', 'Contractual'),
+        ('JO', 'Job Order'),
+        ('LECTURER', 'Part-Time / Visiting Lecturer')
+      ON CONFLICT (code) DO NOTHING;
+
+      INSERT INTO slip_types (code, name) VALUES
+        ('ORAS', 'Obligation Request and Status'),
+        ('BURAS', 'Budget Utilization Request and Status')
+      ON CONFLICT (code) DO NOTHING;
+
+      INSERT INTO funds (code, name, slip_type_id)
+      SELECT 'F01', 'Fund 01 - General Fund (Regular Agency Fund)', id FROM slip_types WHERE code = 'ORAS'
+      ON CONFLICT (code) DO NOTHING;
+
+      INSERT INTO funds (code, name, slip_type_id)
+      SELECT 'F05', 'Fund 05 - Internally Generated Income', id FROM slip_types WHERE code = 'BURAS'
+      ON CONFLICT (code) DO NOTHING;
+
+      INSERT INTO funds (code, name, slip_type_id)
+      SELECT 'F07', 'Fund 07 - Trust / Special Purpose Fund', id FROM slip_types WHERE code = 'BURAS'
+      ON CONFLICT (code) DO NOTHING;
+
+      INSERT INTO roles (name, description) VALUES
+        ('System Administrator', 'Full system administration and user management'),
+        ('Employee', 'University employee self-service portal'),
+        ('Immediate Supervisor', 'Office/department document and attendance validation'),
+        ('HR Office', 'Employee appointments, records, and HR verification'),
+        ('Accounting', 'Payroll computation, review, and journal entries'),
+        ('Accountant', 'Disbursement voucher and accounting certification'),
+        ('Cost Center Signatory', 'Department/college cost center approval'),
+        ('Budget Office', 'Fund allocation, ORAS/BURAS obligation certification'),
+        ('Office of the Chancellor', 'Executive final approval for disbursement'),
+        ('Cashier', 'ADA/ADCA preparation, LandBank upload, and disbursement')
+      ON CONFLICT (name) DO NOTHING;
+
+      INSERT INTO statuses (category, code, name) VALUES
+        ('EMPLOYEE', 'ACTIVE', 'Active'),
+        ('EMPLOYEE', 'INACTIVE', 'Inactive'),
+        ('EMPLOYEE', 'RESIGNED', 'Resigned'),
+        ('PERIOD', 'OPEN', 'Open'),
+        ('PERIOD', 'CLOSED', 'Closed'),
+        ('SUBMISSION', 'SUBMITTED', 'Submitted'),
+        ('SUBMISSION', 'INCOMPLETE', 'Incomplete'),
+        ('SUBMISSION', 'LATE', 'Late'),
+        ('SUBMISSION', 'RETURNED', 'Returned'),
+        ('SUBMISSION', 'VALIDATED', 'Validated'),
+        ('SUBMISSION', 'VERIFIED', 'Verified'),
+        ('SUBMISSION', 'TRANSMITTED', 'Transmitted'),
+        ('PAYROLL', 'DRAFT', 'Draft'),
+        ('PAYROLL', 'PENDING', 'Pending'),
+        ('PAYROLL', 'UNDER_REVIEW', 'Under Review'),
+        ('PAYROLL', 'APPROVED', 'Approved'),
+        ('PAYROLL', 'RETURNED', 'Returned'),
+        ('PAYROLL', 'REJECTED', 'Rejected'),
+        ('PAYROLL', 'DISBURSED', 'Disbursed'),
+        ('APPROVAL', 'PENDING', 'Pending'),
+        ('APPROVAL', 'APPROVED', 'Approved'),
+        ('APPROVAL', 'RETURNED', 'Returned'),
+        ('APPROVAL', 'REJECTED', 'Rejected'),
+        ('DISBURSEMENT', 'SCHEDULED', 'Scheduled'),
+        ('DISBURSEMENT', 'CERTIFIED', 'Certified'),
+        ('DISBURSEMENT', 'APPROVED', 'Approved'),
+        ('DISBURSEMENT', 'RELEASED', 'Released'),
+        ('LEAVE', 'PENDING', 'Pending'),
+        ('LEAVE', 'APPROVED', 'Approved'),
+        ('TRANSMITTAL', 'DRAFT', 'Draft'),
+        ('TRANSMITTAL', 'SENT', 'Sent'),
+        ('TRANSMITTAL', 'RECEIVED', 'Received')
+      ON CONFLICT (category, code) DO NOTHING;
+
+      INSERT INTO offices (code, name) VALUES
+        ('ISO', 'Information Systems Office'),
+        ('COF', 'College of Fisheries'),
+        ('HRO', 'Human Resource Office'),
+        ('ACCT', 'Accounting Office'),
+        ('BUDGET', 'Budget Office'),
+        ('OOTC', 'Office of the Chancellor'),
+        ('CASH', 'Cashier Office'),
+        ('ADMIN', 'General Administration')
+      ON CONFLICT (code) DO NOTHING;
+
+      INSERT INTO cost_centers (code, name) VALUES
+        ('ISO', 'Information Systems Office'),
+        ('COF', 'College of Fisheries'),
+        ('HRO', 'Human Resource Office'),
+        ('ACCT', 'Accounting Office'),
+        ('BUDGET', 'Budget Office'),
+        ('OOTC', 'Office of the Chancellor'),
+        ('CASH', 'Cashier Office'),
+        ('ADMIN', 'General Administration')
+      ON CONFLICT (code) DO NOTHING;
+
+      INSERT INTO pay_components (code, name, type, is_statutory, calc_method) VALUES
+        ('BASIC', 'Basic Salary', 'EARNING', FALSE, 'FIXED'),
+        ('PERA', 'Personnel Economic Relief Allowance (PERA)', 'ALLOWANCE', FALSE, 'FIXED'),
+        ('ADJ', 'Adjustments / Other Allowances', 'ADJUSTMENT', FALSE, 'FIXED'),
+        ('GSIS', 'GSIS Life & Retirement Premium', 'DEDUCTION', TRUE, 'PERCENT'),
+        ('PHILHEALTH', 'PhilHealth Contribution', 'DEDUCTION', TRUE, 'PERCENT'),
+        ('PAGIBIG', 'Pag-IBIG HDMF Contribution', 'DEDUCTION', TRUE, 'FIXED'),
+        ('WTAX', 'BIR Withholding Tax', 'DEDUCTION', TRUE, 'TABLE'),
+        ('ATT_DED', 'Attendance / Tardiness Deduction', 'DEDUCTION', FALSE, 'FIXED'),
+        ('OTHER_DED', 'Other Deductions', 'DEDUCTION', FALSE, 'FIXED')
+      ON CONFLICT (code) DO NOTHING;
+    `)
+
+    // Default document type & payroll period if empty
+    const docTypeCount = await client.query('SELECT COUNT(*)::int AS cnt FROM document_types')
+    if (docTypeCount.rows[0].cnt === 0) {
+      await client.query(`
+        INSERT INTO document_types (name, is_required) VALUES
+          ('Daily Time Record (DTR)', TRUE),
+          ('Accomplishment Report', TRUE),
+          ('Appointment / Contract', FALSE),
+          ('Supporting Document', FALSE);
+      `)
+    }
+
+    const periodCount = await client.query('SELECT COUNT(*)::int AS cnt FROM payroll_periods')
+    if (periodCount.rows[0].cnt === 0) {
+      await client.query(`
+        INSERT INTO payroll_periods (label, period_start, period_end, submission_deadline, status_id)
+        SELECT 'November 2026', '2026-11-01', '2026-11-30', '2026-11-25', id
+        FROM statuses WHERE category = 'PERIOD' AND code = 'OPEN' LIMIT 1;
+      `)
+    }
+
+    // Default approval workflow template & 5 baseline steps if empty
+    const wfCount = await client.query('SELECT COUNT(*)::int AS cnt FROM workflow_templates')
+    if (wfCount.rows[0].cnt === 0) {
+      const wfRes = await client.query(
+        `INSERT INTO workflow_templates (name, document_type) VALUES ('Default Payroll Approval Route', 'PAYROLL') RETURNING id`,
+      )
+      const wfId = wfRes.rows[0].id
+      const stages: Array<[number, string, string, boolean]> = [
+        [1, 'Cost Center Signatory', 'Cost Center Signatory', true],
+        [2, 'HR Office', 'HR Office', false],
+        [3, 'Accounting', 'Accounting', false],
+        [4, 'Budget Office', 'Budget Office', false],
+        [5, 'Office of the Chancellor', 'Office of the Chancellor', false],
+      ]
+      for (const [order, stageName, roleName, useCc] of stages) {
+        await client.query(
+          `INSERT INTO workflow_steps (template_id, step_order, role_id, use_cost_center_signatory, step_name)
+           SELECT $1, $2, id, $3, $4 FROM roles WHERE name = $5 LIMIT 1
+           ON CONFLICT (template_id, step_order) DO NOTHING`,
+          [wfId, order, useCc, stageName, roleName],
+        )
+      }
+    }
+
+    // 5. Seed baseline users, employees, appointments, and user_roles if users table is empty
+    const userCountRes = await client.query('SELECT COUNT(*)::int AS count FROM users')
     if (userCountRes.rows[0].count === 0) {
       console.log('[Migration] Database is empty. Seeding initial baseline accounts...')
+
+      const activeEmpStatusId = (
+        await client.query(`SELECT id FROM statuses WHERE category = 'EMPLOYEE' AND code = 'ACTIVE' LIMIT 1`)
+      ).rows[0].id
+      const defaultFundId = (await client.query(`SELECT id FROM funds WHERE code = 'F01' LIMIT 1`)).rows[0].id
+      const regularTypeId = (
+        await client.query(`SELECT id FROM employment_types WHERE code = 'REGULAR' LIMIT 1`)
+      ).rows[0].id
 
       for (let i = 0; i < DEFAULT_SEED_USERS.length; i++) {
         const u = DEFAULT_SEED_USERS[i]
         const hashedPw = bcrypt.hashSync(u.username, 10)
-
-        // Create matching employee record
         const empNo = `EMP-${String(i + 1).padStart(3, '0')}`
+
         const empRes = await client.query(
           `INSERT INTO employees (
-            employee_no, full_name, department, position, monthly_salary,
-            classification, employment_type, employment_status, status, fund_source, pay_basis
-          ) VALUES ($1, $2, $3, $4, 25000.00, $5, 'Permanent', 'Active', 'Active', 'F01', 'Monthly')
-          RETURNING id`,
-          [empNo, u.name, u.office, u.position, u.classification],
+             employee_no, last_name, first_name, middle_name, birth_date, status_id
+           ) VALUES ($1, $2, $3, NULL, '1990-01-01', $4)
+           RETURNING id`,
+          [empNo, u.lastName, u.firstName, activeEmpStatusId],
         )
-
         const empId = empRes.rows[0].id
-        await client.query(
-          `UPDATE employees SET employee_id = id WHERE id = $1`,
-          [empId],
-        )
 
-        // Create user record
-        await client.query(
-          `INSERT INTO users (
-            id, name, email, username, password,
-            office, cost_center, role, roles, status, employee_id, created_at, updated_at
-          ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-          )`,
-          [
-            empId,
-            u.name,
-            u.email,
-            u.username,
-            hashedPw,
-            u.office,
-            u.costCenter,
-            u.role,
-            u.roles,
-            empId,
-          ],
+        const officeRes = await client.query(
+          `SELECT id FROM offices WHERE code = $1 OR LOWER(name) = LOWER($2) LIMIT 1`,
+          [u.officeCode, u.office],
         )
+        const officeId = officeRes.rows[0]?.id
+
+        const ccRes = await client.query(
+          `SELECT id FROM cost_centers WHERE code = $1 OR LOWER(name) = LOWER($2) LIMIT 1`,
+          [u.officeCode, u.office],
+        )
+        const ccId = ccRes.rows[0]?.id
+
+        if (officeId && ccId) {
+          await client.query(
+            `INSERT INTO appointments (
+               employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+               position_title, monthly_rate, effective_from
+             ) VALUES ($1, $2, $3, $4, $5, $6, 25000.00, '2026-01-01')`,
+            [empId, officeId, ccId, defaultFundId, regularTypeId, u.position],
+          )
+        }
+
+        const userRes = await client.query(
+          `INSERT INTO users (employee_id, username, password_hash, email, is_active)
+           VALUES ($1, $2, $3, $4, TRUE)
+           RETURNING id`,
+          [empId, u.username, hashedPw, u.email],
+        )
+        const userId = userRes.rows[0].id
+
+        for (const roleName of u.roles) {
+          await client.query(
+            `INSERT INTO user_roles (user_id, role_id)
+             SELECT $1, id FROM roles WHERE name = $2 LIMIT 1
+             ON CONFLICT DO NOTHING`,
+            [userId, roleName],
+          )
+        }
       }
 
-      // Synchronize sequences so future inserts don't collide with seeded IDs
-      await client.query(`
-        SELECT setval(pg_get_serial_sequence('users', 'id'), COALESCE(MAX(id), 1)) FROM users;
-        SELECT setval(pg_get_serial_sequence('employees', 'id'), COALESCE(MAX(id), 1)) FROM employees;
-      `)
-
-      console.log(`[Migration] Seeded ${DEFAULT_SEED_USERS.length} accounts successfully.`)
+      console.log(`[Migration] Seeded ${DEFAULT_SEED_USERS.length} baseline accounts successfully.`)
     }
 
     await client.query('COMMIT')
-    console.log('[Migration] All migrations and schema checks completed successfully.')
+    console.log('[Migration] All 43-table schema migrations and checks completed successfully.')
   } catch (error) {
     await client.query('ROLLBACK')
     console.error('[Migration] Migration failed:', error)

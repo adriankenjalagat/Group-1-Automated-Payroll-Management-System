@@ -63,7 +63,7 @@ export const authService = {
         // Automatically sync & update fresh bcrypt hash in the database
         try {
           const freshHash = await bcrypt.hash(cleanPassword, 10)
-          await pool.query('UPDATE users SET password = $1 WHERE id = $2', [freshHash, user.id])
+          await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [freshHash, user.id])
         } catch (updateErr) {
           console.warn('[authService] Password re-hash update error:', updateErr)
         }
@@ -95,11 +95,17 @@ export const authService = {
       },
     )
 
+    await pool
+      .query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1', [user.id])
+      .catch(() => {})
+
     await auditService.logAction(
       user.id ?? null,
       `Successful sign-in for user "${user.username}" with role ${user.roles.join(', ')}`,
       { username: user.username, roles: user.roles },
       ipAddress,
+      'USER',
+      user.id ?? 0,
     )
 
     return {

@@ -35,90 +35,6 @@ export interface ApprovalRouteRule {
   isActive: boolean
 }
 
-function mapApprovalRow(row: any): ApprovalStep {
-  return {
-    id: row.id,
-    payrollId: row.payroll_id,
-    stage: row.stage,
-    status: row.status,
-    approverId: row.approver_id,
-    approverRole: row.approver_role,
-    approverName: row.approver_name,
-    costCenter: row.cost_center,
-    remarks: row.remarks,
-    action: row.action,
-    sequence: row.sequence,
-    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
-  }
-}
-
-function mapRouteRow(row: any): ApprovalRouteRule {
-  return {
-    id: row.id,
-    payrollTypeId: row.payroll_type_id,
-    fundSource: row.fund_source,
-    costCenter: row.cost_center,
-    stageName: row.stage_name,
-    sequenceOrder: row.sequence_order,
-    requiredRole: row.required_role,
-    isActive: Boolean(row.is_active),
-  }
-}
-
-/**
- * Retrieves the approval route for a given payroll, prioritizing the most specific
- * matching rule (exact payroll_type_id + fund_source + cost_center) first, then
- * falling back to wildcard ('*') rules.
- */
-export async function getApprovalRoute(
-  payrollTypeId: string,
-  fundSource: string,
-  costCenter: string,
-  clientOrPool?: any,
-): Promise<ApprovalRouteRule[]> {
-  const q = clientOrPool || pool
-  // Query all active rules, ordered by specificity (exact matches first) then sequence
-  const res = await q.query(
-    `SELECT * FROM approval_routes
-     WHERE is_active = TRUE
-       AND (payroll_type_id = $1 OR payroll_type_id = '*')
-       AND (fund_source = $2 OR fund_source = '*')
-       AND (cost_center = $3 OR cost_center = '*')
-     ORDER BY
-       -- Most specific rules first (fewer wildcards = higher priority)
-       (CASE WHEN payroll_type_id = '*' THEN 0 ELSE 1 END +
-        CASE WHEN fund_source = '*' THEN 0 ELSE 1 END +
-        CASE WHEN cost_center = '*' THEN 0 ELSE 1 END) DESC,
-       sequence_order ASC`,
-    [payrollTypeId || '*', fundSource || '*', costCenter || '*'],
-  )
-
-  if (res.rows.length === 0) {
-    return []
-  }
-
-  // Group by specificity score: take the most specific set of rules
-  const rows = res.rows
-  const topScore =
-    (rows[0].payroll_type_id !== '*' ? 1 : 0) +
-    (rows[0].fund_source !== '*' ? 1 : 0) +
-    (rows[0].cost_center !== '*' ? 1 : 0)
-
-  const bestRules = rows.filter((r: any) => {
-    const score =
-      (r.payroll_type_id !== '*' ? 1 : 0) +
-      (r.fund_source !== '*' ? 1 : 0) +
-      (r.cost_center !== '*' ? 1 : 0)
-    return score === topScore
-  })
-
-  return bestRules.map(mapRouteRow)
-}
-
-/**
- * Maps an approval route's required_role to the set of UserRoles
- * that are authorized to sign at that stage.
- */
 function getAllowedRolesForStage(requiredRole: string): UserRole[] {
   const mapping: Record<string, UserRole[]> = {
     'Cost Center Signatory': ['Cost Center Signatory', 'Immediate Supervisor', 'System Administrator'],
@@ -131,58 +47,103 @@ function getAllowedRolesForStage(requiredRole: string): UserRole[] {
   return mapping[requiredRole] || ['System Administrator']
 }
 
+export async function getApprovalRoute(
+  _payrollTypeId: string,
+  _fundSource: string,
+  _costCenter: string,
+  clientOrPool?: any,
+): Promise<ApprovalRouteRule[]> {
+  const q = clientOrPool || pool
+  const res = await q.query(
+    `SELECT ws.id, ws.step_order, ws.step_name, r.name AS required_role
+     FROM workflow_steps ws
+     JOIN workflow_templates wt ON wt.id = ws.template_id
+     JOIN roles r ON r.id = ws.role_id
+     WHERE wt.document_type = 'PAYROLL'
+     ORDER BY ws.step_order ASC`,
+  )
+  return res.rows.map((r: any) => ({
+    id: Number(r.id),
+    payrollTypeId: '*',
+    fundSource: '*',
+    costCenter: '*',
+    stageName: r.step_name,
+    sequenceOrder: Number(r.step_order),
+    requiredRole: r.required_role,
+    isActive: true,
+  }))
+}
+
 export const approvalsService = {
   async findAll(payrollId?: number): Promise<ApprovalStep[]> {
-    let queryText = `SELECT * FROM approvals`
+    let queryText = `
+      SELECT aa.id,
+             ar.entity_id AS payroll_id,
+             ws.step_name AS stage,
+             ws.step_order AS sequence,
+             aa.action,
+             aa.acted_by AS approver_id,
+             r.name AS approver_role,
+             COALESCE(
+               NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''),
+               u.username
+             ) AS approver_name,
+             cc.name AS cost_center,
+             aa.remarks,
+             aa.acted_at AS updated_at
+      FROM approval_actions aa
+      JOIN approval_requests ar ON ar.id = aa.request_id
+      JOIN workflow_steps ws ON ws.id = aa.step_id
+      JOIN roles r ON r.id = ws.role_id
+      LEFT JOIN users u ON u.id = aa.acted_by
+      LEFT JOIN employees e ON e.id = u.employee_id
+      LEFT JOIN payroll_batches pb ON pb.id = ar.entity_id AND ar.entity_type = 'PAYROLL_BATCH'
+      LEFT JOIN cost_centers cc ON cc.id = pb.cost_center_id
+      WHERE ar.entity_type = 'PAYROLL_BATCH'
+    `
     const params: any[] = []
     if (payrollId) {
-      queryText += ` WHERE payroll_id = $1`
+      queryText += ` AND ar.entity_id = $1`
       params.push(payrollId)
     }
-    queryText += ` ORDER BY sequence ASC, id ASC`
+    queryText += ` ORDER BY ws.step_order ASC, aa.id ASC`
 
     const res = await pool.query(queryText, params)
-    return res.rows.map(mapApprovalRow)
+    return res.rows.map((row: any) => ({
+      id: Number(row.id),
+      payrollId: Number(row.payroll_id),
+      stage: row.stage,
+      status:
+        row.action === 'APPROVE'
+          ? 'Approved'
+          : row.action === 'RETURN'
+            ? 'Returned'
+            : row.action === 'REJECT'
+              ? 'Rejected'
+              : 'Pending',
+      approverId: row.approver_id ? Number(row.approver_id) : null,
+      approverRole: row.approver_role,
+      approverName: row.approver_name,
+      costCenter: row.cost_center,
+      remarks: row.remarks,
+      action: row.action,
+      sequence: Number(row.sequence),
+      updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
+    }))
   },
 
   async findByPayroll(payrollId: number): Promise<ApprovalStep[]> {
     return approvalsService.findAll(payrollId)
   },
 
-  /**
-   * Get all configured approval routes. Optionally filter by payroll type,
-   * fund source, or cost center.
-   */
-  async getRoutes(filters?: {
+  async getRoutes(_filters?: {
     payrollTypeId?: string
     fundSource?: string
     costCenter?: string
   }): Promise<ApprovalRouteRule[]> {
-    let queryText = `SELECT * FROM approval_routes WHERE is_active = TRUE`
-    const params: any[] = []
-    let idx = 1
-
-    if (filters?.payrollTypeId) {
-      queryText += ` AND payroll_type_id = $${idx++}`
-      params.push(filters.payrollTypeId)
-    }
-    if (filters?.fundSource) {
-      queryText += ` AND fund_source = $${idx++}`
-      params.push(filters.fundSource)
-    }
-    if (filters?.costCenter) {
-      queryText += ` AND cost_center = $${idx++}`
-      params.push(filters.costCenter)
-    }
-
-    queryText += ` ORDER BY sequence_order ASC`
-    const res = await pool.query(queryText, params)
-    return res.rows.map(mapRouteRow)
+    return getApprovalRoute('*', '*', '*')
   },
 
-  /**
-   * Create a new approval route rule.
-   */
   async createRoute(data: {
     payrollTypeId?: string
     fundSource?: string
@@ -191,134 +152,96 @@ export const approvalsService = {
     sequenceOrder: number
     requiredRole: string
   }): Promise<ApprovalRouteRule> {
+    let wtRes = await pool.query(
+      `SELECT id FROM workflow_templates WHERE document_type = 'PAYROLL' ORDER BY id ASC LIMIT 1`,
+    )
+    const templateId =
+      wtRes.rows[0]?.id ||
+      (
+        await pool.query(
+          `INSERT INTO workflow_templates (name, document_type) VALUES ('Default Payroll Approval Route', 'PAYROLL') RETURNING id`,
+        )
+      ).rows[0].id
+
+    const roleRes = await pool.query(`SELECT id FROM roles WHERE name = $1 LIMIT 1`, [data.requiredRole])
+    if (roleRes.rows.length === 0) {
+      const err = new Error(`Role "${data.requiredRole}" not found.`)
+      ;(err as any).statusCode = 400
+      throw err
+    }
+
     const res = await pool.query(
-      `INSERT INTO approval_routes (payroll_type_id, fund_source, cost_center, stage_name, sequence_order, required_role, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-       RETURNING *`,
+      `INSERT INTO workflow_steps (template_id, step_order, role_id, use_cost_center_signatory, step_name)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (template_id, step_order)
+       DO UPDATE SET role_id = EXCLUDED.role_id, step_name = EXCLUDED.step_name
+       RETURNING id, step_order, step_name`,
       [
-        data.payrollTypeId || '*',
-        data.fundSource || '*',
-        data.costCenter || '*',
-        data.stageName,
+        templateId,
         data.sequenceOrder,
-        data.requiredRole,
+        roleRes.rows[0].id,
+        data.requiredRole === 'Cost Center Signatory',
+        data.stageName,
       ],
     )
-    return mapRouteRow(res.rows[0])
+
+    return {
+      id: Number(res.rows[0].id),
+      payrollTypeId: data.payrollTypeId || '*',
+      fundSource: data.fundSource || '*',
+      costCenter: data.costCenter || '*',
+      stageName: res.rows[0].step_name,
+      sequenceOrder: Number(res.rows[0].step_order),
+      requiredRole: data.requiredRole,
+      isActive: true,
+    }
   },
 
-  /**
-   * Deactivate an approval route rule (soft delete).
-   */
   async deactivateRoute(id: number): Promise<boolean> {
-    const res = await pool.query(
-      `UPDATE approval_routes SET is_active = FALSE WHERE id = $1 RETURNING id`,
-      [id],
-    )
+    const res = await pool.query(`DELETE FROM workflow_steps WHERE id = $1 RETURNING id`, [id])
     return res.rows.length > 0
   },
 
-  /**
-   * Validates that every configured approval stage for a payroll has been approved.
-   * Rejects direct locking if approvals are missing, incomplete, returned, or rejected.
-   */
   async validateAllStagesApproved(
     payrollId: number,
     clientOrPool?: any,
   ): Promise<{ valid: boolean; route: ApprovalRouteRule[]; approvals: ApprovalStep[] }> {
     const q = clientOrPool || pool
 
-    // 1. Fetch payroll details needed for route matching
-    const pRes = await q.query(
-      `SELECT id, payroll_type_id, fund_source, cost_center, department, status, stage, locked
-       FROM payroll WHERE id = $1`,
+    const bRes = await q.query(
+      `SELECT pb.id, st.code AS status_code
+       FROM payroll_batches pb
+       JOIN statuses st ON st.id = pb.status_id
+       WHERE pb.id = $1`,
       [payrollId],
     )
-    if (pRes.rows.length === 0) {
+    if (bRes.rows.length === 0) {
       const err = new Error(`Payroll record #${payrollId} not found.`)
-        ; (err as any).statusCode = 404
+      ;(err as any).statusCode = 404
       throw err
     }
-    const payroll = pRes.rows[0]
-
-    // 2. Resolve configured route for this payroll
-    const route = await getApprovalRoute(
-      payroll.payroll_type_id || '*',
-      payroll.fund_source || '*',
-      payroll.cost_center || payroll.department || '*',
-      q,
-    )
-
-    if (route.length === 0) {
-      const err = new Error(`No approval route is configured for this payroll type and fund source.`)
-        ; (err as any).statusCode = 400
+    const batch = bRes.rows[0]
+    if (batch.status_code === 'REJECTED' || batch.status_code === 'RETURNED') {
+      const err = new Error(`Cannot lock payroll #${payrollId}: status is ${batch.status_code}.`)
+      ;(err as any).statusCode = 400
       throw err
     }
 
-    // 3. Reject if payroll itself is marked Rejected or Returned
-    if (payroll.status === 'Rejected') {
-      const err = new Error(
-        `Cannot lock payroll #${payrollId}: payroll has been rejected and cannot be locked or marked Ready for DV.`,
-      )
-        ; (err as any).statusCode = 400
-      throw err
-    }
-    if (payroll.status === 'Returned') {
-      const err = new Error(
-        `Cannot lock payroll #${payrollId}: payroll has been returned for correction and has not completed re-approval.`,
-      )
-        ; (err as any).statusCode = 400
-      throw err
+    const route = await getApprovalRoute('*', '*', '*', q)
+    const approvals = await approvalsService.findAll(payrollId)
+
+    const latestByStage = new Map<string, ApprovalStep>()
+    for (const step of approvals) {
+      latestByStage.set(step.stage, step)
     }
 
-    // 4. Fetch all approval records for this payroll
-    const aRes = await q.query(
-      `SELECT * FROM approvals WHERE payroll_id = $1 ORDER BY sequence ASC, id ASC`,
-      [payrollId],
-    )
-    const approvals = aRes.rows.map(mapApprovalRow)
-
-    if (approvals.length === 0) {
-      const err = new Error(
-        `Cannot lock payroll #${payrollId}: no approval stages have been recorded or approved. Required approval workflow: ${route.map((r) => r.stageName).join(' -> ')}.`,
-      )
-        ; (err as any).statusCode = 400
-      throw err
-    }
-
-    // Build map of latest approval record per stage
-    const latestStepByStage = new Map<string, ApprovalStep>()
-    for (const app of approvals) {
-      latestStepByStage.set(app.stage, app)
-    }
-
-    // 5. Reject if any approval stage has a latest status of Rejected or Returned
-    for (const [stage, step] of latestStepByStage.entries()) {
-      if (step.status === 'Rejected') {
+    for (const r of route) {
+      const latest = latestByStage.get(r.stageName)
+      if (!latest || latest.status !== 'Approved') {
         const err = new Error(
-          `Cannot lock payroll #${payrollId}: approval stage "${stage}" was rejected. A rejected payroll cannot be approved or marked Ready for DV.`,
+          `Cannot lock payroll #${payrollId}: stage "${r.stageName}" is incomplete (${latest?.status || 'Not Started'}).`,
         )
-          ; (err as any).statusCode = 400
-        throw err
-      }
-      if (step.status === 'Returned') {
-        const err = new Error(
-          `Cannot lock payroll #${payrollId}: approval stage "${stage}" was returned for correction and has not completed re-approval.`,
-        )
-          ; (err as any).statusCode = 400
-        throw err
-      }
-    }
-
-    // 6. Verify that EVERY required stage in the configured route has an Approved record as its latest step
-    for (const routeStage of route) {
-      const latestStep = latestStepByStage.get(routeStage.stageName)
-      if (!latestStep || latestStep.status !== 'Approved') {
-        const currentStatus = latestStep ? latestStep.status : 'Not Started'
-        const err = new Error(
-          `Cannot lock payroll #${payrollId}: required approval stage "${routeStage.stageName}" (sequence ${routeStage.sequenceOrder}) is incomplete (Current status: ${currentStatus}). All configured approval stages must be approved before locking.`,
-        )
-          ; (err as any).statusCode = 400
+        ;(err as any).statusCode = 400
         throw err
       }
     }
@@ -343,249 +266,172 @@ export const approvalsService = {
   }): Promise<{ step: ApprovalStep; nextStage: string; readyForDv: boolean }> {
     const { payrollId, decision, remarks, actorUser, ip } = params
 
-    // Remarks required for Returned or Rejected
     if ((decision === 'Returned' || decision === 'Rejected') && (!remarks || !remarks.trim())) {
       const err = new Error(`Remarks are required when returning or rejecting a payroll submission.`)
-        ; (err as any).statusCode = 400
+      ;(err as any).statusCode = 400
       throw err
     }
 
-    const payrollRes = await pool.query(`SELECT * FROM payroll WHERE id = $1`, [payrollId])
-    if (payrollRes.rows.length === 0) {
-      const err = new Error(`Payroll record #${payrollId} not found.`)
-        ; (err as any).statusCode = 404
-      throw err
-    }
-
-    const payroll = payrollRes.rows[0]
-    if (payroll.locked && decision === 'Approved' && payroll.status === 'Approved') {
-      const err = new Error(`Payroll record #${payrollId} is already approved and locked.`)
-        ; (err as any).statusCode = 400
-      throw err
-    }
-
-    // Retrieve the configurable approval route from the database
-    const route = await getApprovalRoute(
-      payroll.payroll_type_id || '*',
-      payroll.fund_source || '*',
-      payroll.cost_center || payroll.department || '*',
-    )
-
-    if (route.length === 0) {
-      const err = new Error(`No approval route is configured for this payroll type and fund source.`)
-        ; (err as any).statusCode = 400
-      throw err
-    }
-
-    // Determine current pending stage
-    const pendingStepRes = await pool.query(
-      `SELECT * FROM approvals 
-       WHERE payroll_id = $1 AND status = 'Pending' 
-       ORDER BY sequence ASC, id ASC 
-       LIMIT 1`,
+    const batchRes = await pool.query(
+      `SELECT pb.*, cc.name AS cost_center_name, st.code AS status_code
+       FROM payroll_batches pb
+       JOIN cost_centers cc ON cc.id = pb.cost_center_id
+       JOIN statuses st ON st.id = pb.status_id
+       WHERE pb.id = $1`,
       [payrollId],
     )
-
-    let currentStep = pendingStepRes.rows[0]
-    if (!currentStep) {
-      // If no pending step exists, create one from the first route stage
-      const firstStage = route[0]
-      const matchingStage = route.find((r) => r.stageName === payroll.stage)
-      const currentStage = matchingStage ? matchingStage.stageName : firstStage.stageName
-      const insRes = await pool.query(
-        `INSERT INTO approvals (payroll_id, stage, status, sequence, updated_at)
-         VALUES ($1, $2, 'Pending', 1, CURRENT_TIMESTAMP)
-         RETURNING *`,
-        [payrollId, currentStage],
-      )
-      currentStep = insRes.rows[0]
-    }
-
-    // Find the current stage in the route
-    const currentRouteStage = route.find((r) => r.stageName === currentStep.stage)
-
-    // Validate signatory permissions against current stage using the route's required_role
-    const stageRoles = currentRouteStage
-      ? getAllowedRolesForStage(currentRouteStage.requiredRole)
-      : getAllowedRolesForStage(currentStep.stage)
-
-    const hasRole = actorUser.roles.some((r) => stageRoles.includes(r))
-
-    if (!hasRole) {
-      // Log the unauthorized attempt
-      await auditService.logAction(
-        actorUser.id,
-        `DENIED: Attempted to sign payroll #${payrollId} at stage "${currentStep.stage}" without required role`,
-        {
-          payrollId,
-          stage: currentStep.stage,
-          decision,
-          actorRoles: actorUser.roles,
-          requiredRoles: stageRoles,
-        },
-        ip || null,
-      )
-
-      const err = new Error(
-        `Forbidden: Role ${actorUser.roles.join(', ')} cannot sign for stage "${currentStep.stage}". Required: ${stageRoles.join(', ')}`,
-      )
-        ; (err as any).statusCode = 403
+    if (batchRes.rows.length === 0) {
+      const err = new Error(`Payroll record #${payrollId} not found.`)
+      ;(err as any).statusCode = 404
       throw err
     }
+    const batch = batchRes.rows[0]
 
-    // TASK 2: Cost Center Authorization — enforce strict cost center match for Cost Center Signatory stage
-    if (
-      currentStep.stage === 'Cost Center Signatory' &&
-      actorUser.roles.some((r) => r === 'Cost Center Signatory' || r === 'Immediate Supervisor')
-    ) {
-      const actorCostCenter = params.costCenter || actorUser.costCenter || actorUser.office
-      const payrollCostCenter = payroll.cost_center || payroll.department || ''
-
-      if (
-        payrollCostCenter &&
-        actorCostCenter &&
-        actorCostCenter.toLowerCase() !== payrollCostCenter.toLowerCase()
-      ) {
-        // Log the cost center mismatch attempt
-        await auditService.logAction(
-          actorUser.id,
-          `DENIED: Cost center mismatch for payroll #${payrollId}. Actor: "${actorCostCenter}", Payroll: "${payrollCostCenter}"`,
-          {
-            payrollId,
-            stage: currentStep.stage,
-            decision,
-            actorCostCenter,
-            payrollCostCenter,
-          },
-          ip || null,
-        )
-
-        const err = new Error(
-          `Forbidden: Your assigned cost center "${actorCostCenter}" does not match the payroll's cost center "${payrollCostCenter}". You may only approve payrolls for your assigned cost center.`,
-        )
-          ; (err as any).statusCode = 403
-        throw err
-      }
+    const route = await getApprovalRoute('*', '*', '*')
+    if (route.length === 0) {
+      const err = new Error('No approval route configured.')
+      ;(err as any).statusCode = 400
+      throw err
     }
 
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
 
-      // Update current step
-      const updatedStepRes = await client.query(
-        `UPDATE approvals SET
-           status = $1,
-           action = $1,
-           approver_id = $2,
-           approver_role = $3,
-           approver_name = $4,
-           cost_center = $5,
-           remarks = $6,
-           updated_at = CURRENT_TIMESTAMP
-         WHERE id = $7
+      // Ensure approval_request exists
+      let reqRes = await client.query(
+        `SELECT * FROM approval_requests WHERE entity_type = 'PAYROLL_BATCH' AND entity_id = $1 ORDER BY id DESC LIMIT 1`,
+        [payrollId],
+      )
+      let request = reqRes.rows[0]
+      if (!request) {
+        const wtId = (
+          await client.query(`SELECT id FROM workflow_templates WHERE document_type = 'PAYROLL' ORDER BY id ASC LIMIT 1`)
+        ).rows[0].id
+        const pendStatusId = (
+          await client.query(`SELECT id FROM statuses WHERE category = 'APPROVAL' AND code = 'PENDING' LIMIT 1`)
+        ).rows[0].id
+        const insReq = await client.query(
+          `INSERT INTO approval_requests (template_id, entity_type, entity_id, current_step, status_id, requested_by)
+           VALUES ($1, 'PAYROLL_BATCH', $2, 1, $3, $4)
+           RETURNING *`,
+          [wtId, payrollId, pendStatusId, actorUser.id],
+        )
+        request = insReq.rows[0]
+      }
+
+      const currentStepIndex = Math.min(Math.max(0, Number(request.current_step) - 1), route.length - 1)
+      const currentRouteStage = route[currentStepIndex]
+      const stageRoles = getAllowedRolesForStage(currentRouteStage.requiredRole)
+
+      if (!actorUser.roles.some((r) => stageRoles.includes(r))) {
+        const err = new Error(
+          `Forbidden: Role ${actorUser.roles.join(', ')} cannot sign for stage "${currentRouteStage.stageName}". Required: ${stageRoles.join(', ')}`,
+        )
+        ;(err as any).statusCode = 403
+        throw err
+      }
+
+      if (
+        currentRouteStage.stageName === 'Cost Center Signatory' &&
+        actorUser.roles.some((r) => r === 'Cost Center Signatory' || r === 'Immediate Supervisor')
+      ) {
+        const actorCc = params.costCenter || actorUser.costCenter || actorUser.office
+        const payrollCc = batch.cost_center_name || ''
+        if (payrollCc && actorCc && actorCc.toLowerCase() !== payrollCc.toLowerCase()) {
+          const err = new Error(
+            `Forbidden: Cost center "${actorCc}" does not match payroll cost center "${payrollCc}".`,
+          )
+          ;(err as any).statusCode = 403
+          throw err
+        }
+      }
+
+      const actionEnum = decision === 'Approved' ? 'APPROVE' : decision === 'Returned' ? 'RETURN' : 'REJECT'
+      const actRes = await client.query(
+        `INSERT INTO approval_actions (request_id, step_id, acted_by, action, remarks, acted_at)
+         VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
          RETURNING *`,
-        [
-          decision,
-          actorUser.id,
-          actorUser.roles[0],
-          actorUser.name,
-          params.costCenter || actorUser.costCenter || actorUser.office,
-          remarks || null,
-          currentStep.id,
-        ],
+        [request.id, currentRouteStage.id, actorUser.id, actionEnum, remarks || null],
       )
 
-      let nextStage = currentStep.stage
+      let nextStage = currentRouteStage.stageName
       let readyForDv = false
 
       if (decision === 'Approved') {
-        // Find the next stage in the DB-backed route
-        const currentSeqIndex = route.findIndex((r) => r.stageName === currentStep.stage)
-
-        if (currentSeqIndex >= 0 && currentSeqIndex < route.length - 1) {
-          // Advance to next stage from the route
-          const nextRouteStage = route[currentSeqIndex + 1]
-          nextStage = nextRouteStage.stageName
-
-          await client.query(
-            `INSERT INTO approvals (payroll_id, stage, status, sequence, updated_at)
-             VALUES ($1, $2, 'Pending', $3, CURRENT_TIMESTAMP)`,
-            [payrollId, nextStage, nextRouteStage.sequenceOrder],
-          )
-
-          await client.query(
-            `UPDATE payroll SET
-               stage = $1,
-               current_approval_holder = $1,
-               status = 'Under Review',
-               updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2`,
-            [nextStage, payrollId],
-          )
+        if (currentStepIndex < route.length - 1) {
+          const nextRoute = route[currentStepIndex + 1]
+          nextStage = nextRoute.stageName
+          await client.query(`UPDATE approval_requests SET current_step = $1 WHERE id = $2`, [
+            currentStepIndex + 2,
+            request.id,
+          ])
+          const urStatus = (
+            await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'UNDER_REVIEW' LIMIT 1`)
+          ).rows[0].id
+          await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [urStatus, payrollId])
         } else {
-          // Final approval complete — all configured stages passed
           nextStage = 'Completed'
           readyForDv = true
+          const appReqSt = (
+            await client.query(`SELECT id FROM statuses WHERE category = 'APPROVAL' AND code = 'APPROVED' LIMIT 1`)
+          ).rows[0].id
+          const appPaySt = (
+            await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'APPROVED' LIMIT 1`)
+          ).rows[0].id
+          await client.query(`UPDATE approval_requests SET status_id = $1 WHERE id = $2`, [appReqSt, request.id])
+          await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [appPaySt, payrollId])
 
+          // Create obligation slip if not yet created
+          const schedDisbSt = (
+            await client.query(`SELECT id FROM statuses WHERE category = 'DISBURSEMENT' AND code = 'SCHEDULED' LIMIT 1`)
+          ).rows[0].id
+          const slipNo = `OBL-${new Date().getFullYear()}-${String(payrollId).padStart(4, '0')}`
           await client.query(
-            `UPDATE payroll SET
-               stage = 'Completed',
-               current_approval_holder = 'Completed',
-               status = 'Approved',
-               locked = TRUE,
-               locked_at = CURRENT_TIMESTAMP,
-               locked_by = $1,
-               ready_for_dv = TRUE,
-               updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2`,
-            [actorUser.id, payrollId],
-          )
-
-          // Schedule initial disbursement entry
-          await client.query(
-            `INSERT INTO disbursements (
-               payroll_id, method, status, total_amount, fund_source, created_at
-             ) VALUES (
-               $1, 'Bank Transfer', 'Scheduled', $2, $3, CURRENT_TIMESTAMP
-             )`,
-            [payrollId, payroll.net_pay, payroll.fund_source || 'F01'],
+            `INSERT INTO obligation_slips (batch_id, slip_no, amount, status_id)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (slip_no) DO NOTHING`,
+            [payrollId, slipNo, batch.total_gross, schedDisbSt],
           )
         }
       } else {
-        // Returned or Rejected
-        nextStage = 'Returned'
-        readyForDv = false
-
-        await client.query(
-          `UPDATE payroll SET
-             stage = 'Returned',
-             current_approval_holder = 'Accounting',
-             status = 'Returned',
-             locked = FALSE,
-             updated_at = CURRENT_TIMESTAMP
-           WHERE id = $1`,
-          [payrollId],
-        )
+        nextStage = decision
+        const reqStCode = decision === 'Returned' ? 'RETURNED' : 'REJECTED'
+        const appSt = (
+          await client.query(`SELECT id FROM statuses WHERE category = 'APPROVAL' AND code = $1 LIMIT 1`, [reqStCode])
+        ).rows[0].id
+        const paySt = (
+          await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = $1 LIMIT 1`, [reqStCode])
+        ).rows[0].id
+        await client.query(`UPDATE approval_requests SET status_id = $1 WHERE id = $2`, [appSt, request.id])
+        await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [paySt, payrollId])
       }
 
       await auditService.logAction(
         actorUser.id,
-        `${decision} payroll #${payrollId} at stage "${currentStep.stage}" by ${actorUser.name} (${actorUser.roles.join(', ')})`,
-        {
-          payrollId,
-          stage: currentStep.stage,
-          decision,
-          remarks,
-          nextStage,
-          readyForDv,
-        },
+        `${decision} payroll #${payrollId} at stage "${currentRouteStage.stageName}"`,
+        { payrollId, stage: currentRouteStage.stageName, decision, remarks, nextStage, readyForDv },
         ip || null,
+        'PAYROLL_BATCH',
+        payrollId,
       )
 
       await client.query('COMMIT')
       return {
-        step: mapApprovalRow(updatedStepRes.rows[0]),
+        step: {
+          id: Number(actRes.rows[0].id),
+          payrollId,
+          stage: currentRouteStage.stageName,
+          status: decision,
+          approverId: actorUser.id,
+          approverRole: actorUser.roles[0],
+          approverName: actorUser.name,
+          costCenter: params.costCenter || actorUser.costCenter || actorUser.office,
+          remarks,
+          action: actionEnum,
+          sequence: currentRouteStage.sequenceOrder,
+          updatedAt: new Date(actRes.rows[0].acted_at).toISOString(),
+        },
         nextStage,
         readyForDv,
       }

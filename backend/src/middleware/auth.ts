@@ -108,12 +108,40 @@ export async function authenticate(
       return
     }
 
-    // Always recheck current user account status and permissions against PostgreSQL
+    // Always recheck current user account status and permissions against PostgreSQL (43-table schema)
     const userRes = await pool.query(
-      `SELECT id, name, email, username, office, cost_center, roles, status, employee_id
-       FROM users
-       WHERE id::text = $1 
-          OR LOWER(username) = LOWER($2)
+      `SELECT u.id,
+              u.employee_id,
+              u.username,
+              u.email,
+              u.is_active,
+              COALESCE(
+                NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)), ''),
+                u.username
+              ) AS full_name,
+              COALESCE(o.name, 'University Office') AS office,
+              COALESCE(cc.name, o.name, 'University Office') AS cost_center,
+              COALESCE(
+                ARRAY_AGG(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL),
+                ARRAY['Employee']::text[]
+              ) AS roles
+       FROM users u
+       LEFT JOIN employees e ON e.id = u.employee_id
+       LEFT JOIN LATERAL (
+         SELECT office_id, cost_center_id
+         FROM appointments
+         WHERE employee_id = e.id
+         ORDER BY effective_from DESC, id DESC
+         LIMIT 1
+       ) a ON TRUE
+       LEFT JOIN offices o ON o.id = a.office_id
+       LEFT JOIN cost_centers cc ON cc.id = a.cost_center_id
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id
+       WHERE u.id::text = $1
+          OR LOWER(u.username) = LOWER($2)
+       GROUP BY u.id, u.employee_id, u.username, u.email, u.is_active,
+                e.first_name, e.middle_name, e.last_name, o.name, cc.name
        LIMIT 1`,
       [tokenSubject || '', tokenUsername || ''],
     )
@@ -125,14 +153,9 @@ export async function authenticate(
 
     const dbUser = userRes.rows[0]
 
-    // Reject locked, pending, and inactive accounts
-    if (dbUser.status === 'locked') {
+    // Reject inactive/locked accounts
+    if (!dbUser.is_active) {
       res.status(423).json({ message: 'Account is locked. Please contact your System Administrator.' })
-      return
-    }
-
-    if (dbUser.status !== 'active') {
-      res.status(403).json({ message: `Account is ${dbUser.status}. Access is restricted.` })
       return
     }
 
@@ -143,16 +166,16 @@ export async function authenticate(
       : []
 
     req.user = {
-      id: dbUser.id,
+      id: Number(dbUser.id),
       accountId: `USR-${dbUser.id}`,
-      name: dbUser.name,
+      name: dbUser.full_name,
       email: dbUser.email,
       username: dbUser.username,
       office: dbUser.office || 'University Office',
       costCenter: dbUser.cost_center || dbUser.office || 'University Office',
-      roles: validatedRoles,
-      status: dbUser.status,
-      employeeId: dbUser.employee_id,
+      roles: validatedRoles.length > 0 ? validatedRoles : ['Employee'],
+      status: dbUser.is_active ? 'active' : 'locked',
+      employeeId: dbUser.employee_id ? Number(dbUser.employee_id) : null,
     }
 
     next()
