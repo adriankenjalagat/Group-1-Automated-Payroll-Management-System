@@ -55,10 +55,9 @@ export async function getApprovalRoute(
 ): Promise<ApprovalRouteRule[]> {
   const q = clientOrPool || pool
   const res = await q.query(
-    `SELECT ws.id, ws.step_order, ws.step_name, r.name AS required_role
+    `SELECT ws.id, ws.step_order, ws.step_name, ws.role AS required_role
      FROM workflow_steps ws
      JOIN workflow_templates wt ON wt.id = ws.template_id
-     JOIN roles r ON r.id = ws.role_id
      WHERE wt.document_type = 'PAYROLL'
      ORDER BY ws.step_order ASC`,
   )
@@ -83,7 +82,7 @@ export const approvalsService = {
              ws.step_order AS sequence,
              aa.action,
              aa.acted_by AS approver_id,
-             r.name AS approver_role,
+             ws.role AS approver_role,
              COALESCE(
                NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''),
                u.username
@@ -94,7 +93,6 @@ export const approvalsService = {
       FROM approval_actions aa
       JOIN approval_requests ar ON ar.id = aa.request_id
       JOIN workflow_steps ws ON ws.id = aa.step_id
-      JOIN roles r ON r.id = ws.role_id
       LEFT JOIN users u ON u.id = aa.acted_by
       LEFT JOIN employees e ON e.id = u.employee_id
       LEFT JOIN payroll_batches pb ON pb.id = ar.entity_id AND ar.entity_type = 'PAYROLL_BATCH'
@@ -163,23 +161,16 @@ export const approvalsService = {
         )
       ).rows[0].id
 
-    const roleRes = await pool.query(`SELECT id FROM roles WHERE name = $1 LIMIT 1`, [data.requiredRole])
-    if (roleRes.rows.length === 0) {
-      const err = new Error(`Role "${data.requiredRole}" not found.`)
-      ;(err as any).statusCode = 400
-      throw err
-    }
-
     const res = await pool.query(
-      `INSERT INTO workflow_steps (template_id, step_order, role_id, use_cost_center_signatory, step_name)
+      `INSERT INTO workflow_steps (template_id, step_order, role, use_cost_center_signatory, step_name)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (template_id, step_order)
-       DO UPDATE SET role_id = EXCLUDED.role_id, step_name = EXCLUDED.step_name
+       DO UPDATE SET role = EXCLUDED.role, step_name = EXCLUDED.step_name
        RETURNING id, step_order, step_name`,
       [
         templateId,
         data.sequenceOrder,
-        roleRes.rows[0].id,
+        data.requiredRole,
         data.requiredRole === 'Cost Center Signatory',
         data.stageName,
       ],

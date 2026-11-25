@@ -31,10 +31,9 @@ export const auditService = {
              u.username,
              'System Administrator'
            ) AS name,
-           COALESCE(r.name, 'System Administrator') AS role
+           COALESCE(u.role, 'System Administrator') AS role
          FROM audit_logs a
          LEFT JOIN users u ON a.user_id = u.id
-         LEFT JOIN roles r ON r.id = u.role_id
          LEFT JOIN employees e ON e.id = u.employee_id
          ORDER BY a.created_at DESC, a.id DESC`,
       )

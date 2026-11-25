@@ -54,7 +54,7 @@ const USER_SELECT_SQL = `
   SELECT
     u.id,
     u.employee_id,
-    u.role_id,
+    u.role,
     u.username,
     u.password_hash,
     u.email,
@@ -66,9 +66,8 @@ const USER_SELECT_SQL = `
     ) AS full_name,
     COALESCE(o.name, 'University Office') AS office,
     COALESCE(cc.name, o.name, 'University Office') AS cost_center,
-    ARRAY[COALESCE(r.name, 'Employee')]::text[] AS roles
+    ARRAY[COALESCE(u.role, 'Employee')]::text[] AS roles
   FROM users u
-  LEFT JOIN roles r ON r.id = u.role_id
   LEFT JOIN employees e ON e.id = u.employee_id
   LEFT JOIN LATERAL (
     SELECT office_id, cost_center_id
@@ -299,20 +298,11 @@ export const usersService = {
         )
       }
 
-      const roleRes = await client.query(
-        `SELECT id FROM roles WHERE name = $1 ORDER BY id ASC LIMIT 1`,
-        [primaryRole],
-      )
-      const roleId = Number(
-        roleRes.rows[0]?.id ||
-          (await client.query(`SELECT id FROM roles WHERE name = 'Employee' LIMIT 1`)).rows[0].id,
-      )
-
       const userIns = await client.query(
-        `INSERT INTO users (employee_id, role_id, username, password_hash, email, is_active)
+        `INSERT INTO users (employee_id, role, username, password_hash, email, is_active)
          VALUES ($1, $2, $3, $4, $5, TRUE)
          RETURNING id`,
-        [parsedEmployeeId, roleId, username, hashedPassword, rawEmail],
+        [parsedEmployeeId, primaryRole, username, hashedPassword, rawEmail],
       )
       const userId = Number(userIns.rows[0].id)
 
@@ -458,13 +448,7 @@ export const usersService = {
           ;(err as any).statusCode = 400
           throw err
         }
-        const roleRes = await client.query(
-          `SELECT id FROM roles WHERE name = $1 ORDER BY id ASC LIMIT 1`,
-          [validatedRoles[0]],
-        )
-        if (roleRes.rows.length > 0) {
-          await client.query(`UPDATE users SET role_id = $1 WHERE id = $2`, [roleRes.rows[0].id, id])
-        }
+        await client.query(`UPDATE users SET role = $1 WHERE id = $2`, [validatedRoles[0], id])
       }
 
       await auditService.logAction(

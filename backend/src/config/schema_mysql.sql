@@ -62,18 +62,10 @@ CREATE TABLE `employees` (
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE `roles` (
-  `id`          BIGINT NOT NULL AUTO_INCREMENT,
-  `name`        VARCHAR(100) NOT NULL COMMENT 'Admin, Employee, Immediate Supervisor, HR, Accounting, Cost Center Signatory, Budget, Chancellor, Cashier',
-  `description` VARCHAR(255) NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_roles_name` (`name`)
-) ENGINE=InnoDB;
-
 CREATE TABLE `users` (
   `id`            BIGINT NOT NULL AUTO_INCREMENT,
   `employee_id`   BIGINT       NULL COMMENT 'nullable, 1:1 with employees',
-  `role_id`       BIGINT       NOT NULL,
+  `role`          VARCHAR(100) NOT NULL DEFAULT 'Employee',
   `username`      VARCHAR(100) NOT NULL,
   `password_hash` VARCHAR(255) NOT NULL,
   `email`         VARCHAR(255) NOT NULL,
@@ -83,13 +75,10 @@ CREATE TABLE `users` (
   UNIQUE KEY `uq_users_employee_id` (`employee_id`),
   UNIQUE KEY `uq_users_username` (`username`),
   UNIQUE KEY `uq_users_email` (`email`),
-  KEY `idx_users_role_id` (`role_id`),
+  KEY `idx_users_role` (`role`),
   CONSTRAINT `fk_users_employee`
     FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT `fk_users_role`
-    FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE
+    ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE `audit_logs` (
@@ -574,18 +563,15 @@ CREATE TABLE `workflow_steps` (
   `id`                        BIGINT NOT NULL AUTO_INCREMENT,
   `template_id`               BIGINT       NOT NULL,
   `step_order`                INT          NOT NULL,
-  `role_id`                   BIGINT       NOT NULL,
+  `role`                      VARCHAR(100) NOT NULL,
   `use_cost_center_signatory` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '1 => resolve via cost_center_signatories',
   `step_name`                 VARCHAR(150) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_workflow_steps_template_order` (`template_id`, `step_order`),
-  KEY `idx_workflow_steps_role_id` (`role_id`),
+  KEY `idx_workflow_steps_role` (`role`),
   CONSTRAINT `fk_workflow_steps_template`
     FOREIGN KEY (`template_id`) REFERENCES `workflow_templates` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_workflow_steps_role`
-    FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE
+    ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE `approval_requests` (

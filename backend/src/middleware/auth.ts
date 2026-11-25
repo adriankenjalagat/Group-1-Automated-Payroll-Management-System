@@ -112,7 +112,7 @@ export async function authenticate(
     const userRes = await pool.query(
       `SELECT u.id,
               u.employee_id,
-              u.role_id,
+              u.role,
               u.username,
               u.email,
               u.is_active,
@@ -122,9 +122,8 @@ export async function authenticate(
               ) AS full_name,
               COALESCE(o.name, 'University Office') AS office,
               COALESCE(cc.name, o.name, 'University Office') AS cost_center,
-              ARRAY[COALESCE(r.name, 'Employee')]::text[] AS roles
+              ARRAY[COALESCE(u.role, 'Employee')]::text[] AS roles
        FROM users u
-       LEFT JOIN roles r ON r.id = u.role_id
        LEFT JOIN employees e ON e.id = u.employee_id
        LEFT JOIN LATERAL (
          SELECT office_id, cost_center_id

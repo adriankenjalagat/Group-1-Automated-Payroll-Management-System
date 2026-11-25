@@ -282,50 +282,56 @@ export async function runMigrations(): Promise<void> {
       `)
     }
 
-    // 2c. If upgrading an existing DB that still has `user_roles`, merge it cleanly into `users.role_id` BEFORE applying schema.sql
-    const hasUserRolesTable = await client.query(`
+    // 2c. If upgrading an existing DB that still has `roles` or `user_roles`, convert to `role VARCHAR(100)` directly on `users` & `workflow_steps` BEFORE applying schema.sql
+    const hasRolesTable = await client.query(`
       SELECT 1 FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name = 'user_roles'
+      WHERE table_schema = 'public' AND table_name IN ('roles', 'user_roles')
       LIMIT 1
     `)
-    if (hasUserRolesTable.rows.length > 0) {
-      console.log('[Migration] Merging user_roles table into users.role_id...')
+    if (hasRolesTable.rows.length > 0) {
+      console.log('[Migration] Converting users.role_id & workflow_steps.role_id to VARCHAR role and dropping roles/user_roles...')
       await client.query(`
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id BIGINT NULL;
-
-        UPDATE users u
-        SET role_id = sub.role_id
-        FROM (
-          SELECT DISTINCT ON (user_id) user_id, role_id
-          FROM user_roles
-          ORDER BY user_id, role_id ASC
-        ) sub
-        WHERE u.id = sub.user_id AND u.role_id IS NULL;
-
-        UPDATE users
-        SET role_id = (SELECT id FROM roles WHERE name = 'Employee' ORDER BY id ASC LIMIT 1)
-        WHERE role_id IS NULL;
-
-        ALTER TABLE users ALTER COLUMN role_id SET NOT NULL;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(100) NOT NULL DEFAULT 'Employee';
+        ALTER TABLE workflow_steps ADD COLUMN IF NOT EXISTS role VARCHAR(100) NOT NULL DEFAULT 'Employee';
 
         DO $$
         BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_role'
-          ) THEN
-            ALTER TABLE users
-              ADD CONSTRAINT fk_users_role
-              FOREIGN KEY (role_id) REFERENCES roles (id)
-              ON DELETE RESTRICT ON UPDATE CASCADE;
+          IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'roles') THEN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'role_id') THEN
+              UPDATE users u
+              SET role = r.name
+              FROM roles r
+              WHERE u.role_id = r.id;
+            ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_roles') THEN
+              UPDATE users u
+              SET role = sub.role_name
+              FROM (
+                SELECT DISTINCT ON (ur.user_id) ur.user_id, r.name AS role_name
+                FROM user_roles ur
+                JOIN roles r ON r.id = ur.role_id
+                ORDER BY ur.user_id, ur.role_id ASC
+              ) sub
+              WHERE u.id = sub.user_id;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'workflow_steps' AND column_name = 'role_id') THEN
+              UPDATE workflow_steps ws
+              SET role = r.name
+              FROM roles r
+              WHERE ws.role_id = r.id;
+            END IF;
           END IF;
         END $$;
 
+        ALTER TABLE users DROP COLUMN IF EXISTS role_id CASCADE;
+        ALTER TABLE workflow_steps DROP COLUMN IF EXISTS role_id CASCADE;
         DROP TABLE IF EXISTS user_roles CASCADE;
+        DROP TABLE IF EXISTS roles CASCADE;
       `)
     }
 
-    // 3. Apply the 41-table normalized PostgreSQL schema directly in `public`
-    console.log('[Migration] Applying 41-table normalized schema.sql...')
+    // 3. Apply the 40-table normalized PostgreSQL schema directly in `public`
+    console.log('[Migration] Applying 40-table normalized schema.sql...')
     await client.query(readSqlFile('schema.sql'))
 
     // 4. Seed required lookup & reference data (idempotent)
@@ -346,19 +352,6 @@ export async function runMigrations(): Promise<void> {
       INSERT INTO funds (code, name, slip_type_id)
       SELECT 'F07', 'Fund 07 - Trust / Special Purpose Fund', id FROM slip_types WHERE code = 'BURAS'
       ON CONFLICT (code) DO NOTHING;
-
-      INSERT INTO roles (name, description) VALUES
-        ('System Administrator', 'Full system administration and user management'),
-        ('Employee', 'University employee self-service portal'),
-        ('Immediate Supervisor', 'Office/department document and attendance validation'),
-        ('HR Office', 'Employee appointments, records, and HR verification'),
-        ('Accounting', 'Payroll computation, review, and journal entries'),
-        ('Accountant', 'Disbursement voucher and accounting certification'),
-        ('Cost Center Signatory', 'Department/college cost center approval'),
-        ('Budget Office', 'Fund allocation, ORAS/BURAS obligation certification'),
-        ('Office of the Chancellor', 'Executive final approval for disbursement'),
-        ('Cashier', 'ADA/ADCA preparation, LandBank upload, and disbursement')
-      ON CONFLICT (name) DO NOTHING;
 
       INSERT INTO statuses (category, code, name) VALUES
         ('EMPLOYEE', 'ACTIVE', 'Active'),
@@ -467,10 +460,10 @@ export async function runMigrations(): Promise<void> {
       ]
       for (const [order, stageName, roleName, useCc] of stages) {
         await client.query(
-          `INSERT INTO workflow_steps (template_id, step_order, role_id, use_cost_center_signatory, step_name)
-           SELECT $1, $2, id, $3, $4 FROM roles WHERE name = $5 LIMIT 1
+          `INSERT INTO workflow_steps (template_id, step_order, role, use_cost_center_signatory, step_name)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (template_id, step_order) DO NOTHING`,
-          [wfId, order, useCc, stageName, roleName],
+          [wfId, order, roleName, useCc, stageName],
         )
       }
     }
@@ -522,18 +515,11 @@ export async function runMigrations(): Promise<void> {
         }
 
         const primaryRoleName = u.roles[0] || 'Employee'
-        const roleRes = await client.query(
-          `SELECT id FROM roles WHERE name = $1 ORDER BY id ASC LIMIT 1`,
-          [primaryRoleName],
-        )
-        const roleId =
-          roleRes.rows[0]?.id ||
-          (await client.query(`SELECT id FROM roles WHERE name = 'Employee' LIMIT 1`)).rows[0].id
 
         await client.query(
-          `INSERT INTO users (employee_id, role_id, username, password_hash, email, is_active)
+          `INSERT INTO users (employee_id, role, username, password_hash, email, is_active)
            VALUES ($1, $2, $3, $4, $5, TRUE)`,
-          [empId, roleId, u.username, hashedPw, u.email],
+          [empId, primaryRoleName, u.username, hashedPw, u.email],
         )
       }
 
