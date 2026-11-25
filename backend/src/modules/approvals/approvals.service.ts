@@ -55,11 +55,10 @@ export async function getApprovalRoute(
 ): Promise<ApprovalRouteRule[]> {
   const q = clientOrPool || pool
   const res = await q.query(
-    `SELECT ws.id, ws.step_order, ws.step_name, ws.role AS required_role
-     FROM workflow_steps ws
-     JOIN workflow_templates wt ON wt.id = ws.template_id
-     WHERE wt.document_type = 'PAYROLL'
-     ORDER BY ws.step_order ASC`,
+    `SELECT w.id, w.step_order, w.step_name, w.role AS required_role
+     FROM workflows w
+     WHERE w.document_type = 'PAYROLL'
+     ORDER BY w.step_order ASC`,
   )
   return res.rows.map((r: any) => ({
     id: Number(r.id),
@@ -78,11 +77,11 @@ export const approvalsService = {
     let queryText = `
       SELECT aa.id,
              ar.entity_id AS payroll_id,
-             ws.step_name AS stage,
-             ws.step_order AS sequence,
+             w.step_name AS stage,
+             w.step_order AS sequence,
              aa.action,
              aa.acted_by AS approver_id,
-             ws.role AS approver_role,
+             w.role AS approver_role,
              COALESCE(
                NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''),
                u.username
@@ -92,7 +91,7 @@ export const approvalsService = {
              aa.acted_at AS updated_at
       FROM approval_actions aa
       JOIN approval_requests ar ON ar.id = aa.request_id
-      JOIN workflow_steps ws ON ws.id = aa.step_id
+      JOIN workflows w ON w.id = aa.workflow_id
       LEFT JOIN users u ON u.id = aa.acted_by
       LEFT JOIN employees e ON e.id = u.employee_id
       LEFT JOIN payrolls p ON p.id = ar.entity_id AND ar.entity_type = 'PAYROLL'
@@ -104,7 +103,7 @@ export const approvalsService = {
       queryText += ` AND ar.entity_id = $1`
       params.push(payrollId)
     }
-    queryText += ` ORDER BY ws.step_order ASC, aa.id ASC`
+    queryText += ` ORDER BY w.step_order ASC, aa.id ASC`
 
     const res = await pool.query(queryText, params)
     return res.rows.map((row: any) => ({
@@ -150,25 +149,13 @@ export const approvalsService = {
     sequenceOrder: number
     requiredRole: string
   }): Promise<ApprovalRouteRule> {
-    let wtRes = await pool.query(
-      `SELECT id FROM workflow_templates WHERE document_type = 'PAYROLL' ORDER BY id ASC LIMIT 1`,
-    )
-    const templateId =
-      wtRes.rows[0]?.id ||
-      (
-        await pool.query(
-          `INSERT INTO workflow_templates (name, document_type) VALUES ('Default Payroll Approval Route', 'PAYROLL') RETURNING id`,
-        )
-      ).rows[0].id
-
     const res = await pool.query(
-      `INSERT INTO workflow_steps (template_id, step_order, role, use_cost_center_signatory, step_name)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (template_id, step_order)
+      `INSERT INTO workflows (name, document_type, step_order, role, use_cost_center_signatory, step_name)
+       VALUES ('Default Payroll Approval Route', 'PAYROLL', $1, $2, $3, $4)
+       ON CONFLICT (document_type, step_order)
        DO UPDATE SET role = EXCLUDED.role, step_name = EXCLUDED.step_name
        RETURNING id, step_order, step_name`,
       [
-        templateId,
         data.sequenceOrder,
         data.requiredRole,
         data.requiredRole === 'Cost Center Signatory',
@@ -189,7 +176,7 @@ export const approvalsService = {
   },
 
   async deactivateRoute(id: number): Promise<boolean> {
-    const res = await pool.query(`DELETE FROM workflow_steps WHERE id = $1 RETURNING id`, [id])
+    const res = await pool.query(`DELETE FROM workflows WHERE id = $1 RETURNING id`, [id])
     return res.rows.length > 0
   },
 
@@ -296,17 +283,14 @@ export const approvalsService = {
       )
       let request = reqRes.rows[0]
       if (!request) {
-        const wtId = (
-          await client.query(`SELECT id FROM workflow_templates WHERE document_type = 'PAYROLL' ORDER BY id ASC LIMIT 1`)
-        ).rows[0].id
         const pendStatusId = (
           await client.query(`SELECT id FROM statuses WHERE category = 'APPROVAL' AND code = 'PENDING' LIMIT 1`)
         ).rows[0].id
         const insReq = await client.query(
-          `INSERT INTO approval_requests (template_id, entity_type, entity_id, current_step, status_id, requested_by)
-           VALUES ($1, 'PAYROLL', $2, 1, $3, $4)
+          `INSERT INTO approval_requests (document_type, entity_type, entity_id, current_step, status_id, requested_by)
+           VALUES ('PAYROLL', 'PAYROLL', $1, 1, $2, $3)
            RETURNING *`,
-          [wtId, payrollId, pendStatusId, actorUser.id],
+          [payrollId, pendStatusId, actorUser.id],
         )
         request = insReq.rows[0]
       }
@@ -340,7 +324,7 @@ export const approvalsService = {
 
       const actionEnum = decision === 'Approved' ? 'APPROVE' : decision === 'Returned' ? 'RETURN' : 'REJECT'
       const actRes = await client.query(
-        `INSERT INTO approval_actions (request_id, step_id, acted_by, action, remarks, acted_at)
+        `INSERT INTO approval_actions (request_id, workflow_id, acted_by, action, remarks, acted_at)
          VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
          RETURNING *`,
         [request.id, currentRouteStage.id, actorUser.id, actionEnum, remarks || null],

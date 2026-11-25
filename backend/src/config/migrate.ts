@@ -355,8 +355,26 @@ export async function runMigrations(): Promise<void> {
       `)
     }
 
-    // 3. Apply the 37-table normalized PostgreSQL schema directly in `public`
-    console.log('[Migration] Applying 37-table normalized schema.sql (payrolls unified)...')
+    // 2e. If upgrading an existing DB that still has split workflow_templates/workflow_steps, merge into `workflows`
+    const hasSplitWorkflow = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name IN ('workflow_templates', 'workflow_steps')
+      LIMIT 1
+    `)
+    if (hasSplitWorkflow.rows.length > 0) {
+      console.log('[Migration] Merging workflow_templates and workflow_steps into single workflows table...')
+      await client.query(`
+        DROP TABLE IF EXISTS
+          approval_actions,
+          approval_requests,
+          workflow_steps,
+          workflow_templates
+        CASCADE;
+      `)
+    }
+
+    // 3. Apply the 36-table normalized PostgreSQL schema directly in `public`
+    console.log('[Migration] Applying 36-table normalized schema.sql (workflows unified)...')
     await client.query(readSqlFile('schema.sql'))
 
     // 4. Seed required lookup & reference data (idempotent)
@@ -469,13 +487,9 @@ export async function runMigrations(): Promise<void> {
       `)
     }
 
-    // Default approval workflow template & 5 baseline steps if empty
-    const wfCount = await client.query('SELECT COUNT(*)::int AS cnt FROM workflow_templates')
+    // Default approval workflow (5 baseline steps) if empty
+    const wfCount = await client.query('SELECT COUNT(*)::int AS cnt FROM workflows')
     if (wfCount.rows[0].cnt === 0) {
-      const wfRes = await client.query(
-        `INSERT INTO workflow_templates (name, document_type) VALUES ('Default Payroll Approval Route', 'PAYROLL') RETURNING id`,
-      )
-      const wfId = wfRes.rows[0].id
       const stages: Array<[number, string, string, boolean]> = [
         [1, 'Cost Center Signatory', 'Cost Center Signatory', true],
         [2, 'HR Office', 'HR Office', false],
@@ -485,10 +499,10 @@ export async function runMigrations(): Promise<void> {
       ]
       for (const [order, stageName, roleName, useCc] of stages) {
         await client.query(
-          `INSERT INTO workflow_steps (template_id, step_order, role, use_cost_center_signatory, step_name)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (template_id, step_order) DO NOTHING`,
-          [wfId, order, roleName, useCc, stageName],
+          `INSERT INTO workflows (name, document_type, step_order, role, use_cost_center_signatory, step_name)
+           VALUES ('Default Payroll Approval Route', 'PAYROLL', $1, $2, $3, $4)
+           ON CONFLICT (document_type, step_order) DO NOTHING`,
+          [order, roleName, useCc, stageName],
         )
       }
     }

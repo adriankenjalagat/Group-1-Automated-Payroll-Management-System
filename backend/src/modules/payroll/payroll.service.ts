@@ -228,7 +228,7 @@ const PAYROLL_SELECT_SQL = `
     a.monthly_rate,
     a.daily_rate,
     a.hourly_rate,
-    ws.step_name AS current_stage_name
+    w.step_name AS current_stage_name
   FROM payrolls p
   JOIN statuses st ON st.id = p.status_id
   JOIN payroll_periods pp ON pp.id = p.period_id
@@ -239,7 +239,7 @@ const PAYROLL_SELECT_SQL = `
   LEFT JOIN LATERAL (
     SELECT * FROM approval_requests WHERE entity_type = 'PAYROLL' AND entity_id = p.id ORDER BY id DESC LIMIT 1
   ) ar ON TRUE
-  LEFT JOIN workflow_steps ws ON ws.template_id = ar.template_id AND ws.step_order = ar.current_step
+  LEFT JOIN workflows w ON w.document_type = ar.document_type AND w.step_order = ar.current_step
 `
 
 function mapPayrollRow(row: any): PayrollRecord {
@@ -426,9 +426,6 @@ export const payrollService = {
       const payrollId = Number(payrollIns.rows[0].id)
 
       // Initialize approval_request
-      const wtId = (
-        await client.query(`SELECT id FROM workflow_templates WHERE document_type = 'PAYROLL' ORDER BY id ASC LIMIT 1`)
-      ).rows[0]?.id
       const appPendSt = (
         await client.query(`SELECT id FROM statuses WHERE category = 'APPROVAL' AND code = 'PENDING' LIMIT 1`)
       ).rows[0]?.id
@@ -436,11 +433,11 @@ export const payrollService = {
         actingUserId ||
         Number((await client.query(`SELECT id FROM users ORDER BY id ASC LIMIT 1`)).rows[0].id)
 
-      if (wtId && appPendSt) {
+      if (appPendSt) {
         await client.query(
-          `INSERT INTO approval_requests (template_id, entity_type, entity_id, current_step, status_id, requested_by)
-           VALUES ($1, 'PAYROLL', $2, 1, $3, $4)`,
-          [wtId, payrollId, appPendSt, reqBy],
+          `INSERT INTO approval_requests (document_type, entity_type, entity_id, current_step, status_id, requested_by)
+           VALUES ('PAYROLL', 'PAYROLL', $1, 1, $2, $3)`,
+          [payrollId, appPendSt, reqBy],
         )
       }
 

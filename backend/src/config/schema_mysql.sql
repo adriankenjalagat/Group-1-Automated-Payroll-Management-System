@@ -534,44 +534,33 @@ CREATE TABLE `payrolls` (
 -- 5. APPROVAL WORKFLOW
 -- =============================================================================
 
-CREATE TABLE `workflow_templates` (
-  `id`            BIGINT NOT NULL AUTO_INCREMENT,
-  `name`          VARCHAR(150) NOT NULL,
-  `document_type` ENUM('PAYROLL', 'ORAS', 'BURAS', 'DV', 'ADA', 'ADCA') NOT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB;
-
-CREATE TABLE `workflow_steps` (
+CREATE TABLE `workflows` (
   `id`                        BIGINT NOT NULL AUTO_INCREMENT,
-  `template_id`               BIGINT       NOT NULL,
+  `name`                      VARCHAR(150) NOT NULL,
+  `document_type`             ENUM('PAYROLL', 'ORAS', 'BURAS', 'DV', 'ADA', 'ADCA') NOT NULL,
   `step_order`                INT          NOT NULL,
   `role`                      VARCHAR(100) NOT NULL,
   `use_cost_center_signatory` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '1 => resolve via cost_center_signatories',
   `step_name`                 VARCHAR(150) NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_workflow_steps_template_order` (`template_id`, `step_order`),
-  KEY `idx_workflow_steps_role` (`role`),
-  CONSTRAINT `fk_workflow_steps_template`
-    FOREIGN KEY (`template_id`) REFERENCES `workflow_templates` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE
+  UNIQUE KEY `uq_workflows_doc_order` (`document_type`, `step_order`),
+  KEY `idx_workflows_doc_type` (`document_type`),
+  KEY `idx_workflows_role` (`role`)
 ) ENGINE=InnoDB;
 
 CREATE TABLE `approval_requests` (
-  `id`           BIGINT NOT NULL AUTO_INCREMENT,
-  `template_id`  BIGINT      NOT NULL,
-  `entity_type`  VARCHAR(50) NOT NULL COMMENT 'polymorphic',
-  `entity_id`    BIGINT      NOT NULL,
-  `current_step` INT         NOT NULL DEFAULT 1,
-  `status_id`    BIGINT      NOT NULL,
-  `requested_by` BIGINT      NOT NULL,
+  `id`            BIGINT NOT NULL AUTO_INCREMENT,
+  `document_type` ENUM('PAYROLL', 'ORAS', 'BURAS', 'DV', 'ADA', 'ADCA') NOT NULL DEFAULT 'PAYROLL',
+  `entity_type`   VARCHAR(50) NOT NULL COMMENT 'polymorphic',
+  `entity_id`     BIGINT      NOT NULL,
+  `current_step`  INT         NOT NULL DEFAULT 1,
+  `status_id`     BIGINT      NOT NULL,
+  `requested_by`  BIGINT      NOT NULL,
   PRIMARY KEY (`id`),
-  KEY `idx_approval_requests_template_id` (`template_id`),
+  KEY `idx_approval_requests_doc_type` (`document_type`),
   KEY `idx_approval_requests_entity` (`entity_type`, `entity_id`),
   KEY `idx_approval_requests_status_id` (`status_id`),
   KEY `idx_approval_requests_requested_by` (`requested_by`),
-  CONSTRAINT `fk_approval_requests_template`
-    FOREIGN KEY (`template_id`) REFERENCES `workflow_templates` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_approval_requests_status`
     FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -581,22 +570,22 @@ CREATE TABLE `approval_requests` (
 ) ENGINE=InnoDB;
 
 CREATE TABLE `approval_actions` (
-  `id`         BIGINT NOT NULL AUTO_INCREMENT,
-  `request_id` BIGINT       NOT NULL,
-  `step_id`    BIGINT       NOT NULL,
-  `acted_by`   BIGINT       NOT NULL,
-  `action`     ENUM('APPROVE', 'RETURN', 'REJECT') NOT NULL,
-  `remarks`    VARCHAR(500) NULL,
-  `acted_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `id`          BIGINT NOT NULL AUTO_INCREMENT,
+  `request_id`  BIGINT       NOT NULL,
+  `workflow_id` BIGINT       NOT NULL,
+  `acted_by`    BIGINT       NOT NULL,
+  `action`      ENUM('APPROVE', 'RETURN', 'REJECT') NOT NULL,
+  `remarks`     VARCHAR(500) NULL,
+  `acted_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_approval_actions_request_id` (`request_id`),
-  KEY `idx_approval_actions_step_id` (`step_id`),
+  KEY `idx_approval_actions_workflow_id` (`workflow_id`),
   KEY `idx_approval_actions_acted_by` (`acted_by`),
   CONSTRAINT `fk_approval_actions_request`
     FOREIGN KEY (`request_id`) REFERENCES `approval_requests` (`id`)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_approval_actions_step`
-    FOREIGN KEY (`step_id`) REFERENCES `workflow_steps` (`id`)
+  CONSTRAINT `fk_approval_actions_workflow`
+    FOREIGN KEY (`workflow_id`) REFERENCES `workflows` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_approval_actions_acted_by`
     FOREIGN KEY (`acted_by`) REFERENCES `users` (`id`)
