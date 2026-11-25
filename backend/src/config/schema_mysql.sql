@@ -62,9 +62,18 @@ CREATE TABLE `employees` (
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE `roles` (
+  `id`          BIGINT NOT NULL AUTO_INCREMENT,
+  `name`        VARCHAR(100) NOT NULL COMMENT 'Admin, Employee, Immediate Supervisor, HR, Accounting, Cost Center Signatory, Budget, Chancellor, Cashier',
+  `description` VARCHAR(255) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_roles_name` (`name`)
+) ENGINE=InnoDB;
+
 CREATE TABLE `users` (
   `id`            BIGINT NOT NULL AUTO_INCREMENT,
   `employee_id`   BIGINT       NULL COMMENT 'nullable, 1:1 with employees',
+  `role_id`       BIGINT       NOT NULL,
   `username`      VARCHAR(100) NOT NULL,
   `password_hash` VARCHAR(255) NOT NULL,
   `email`         VARCHAR(255) NOT NULL,
@@ -74,28 +83,11 @@ CREATE TABLE `users` (
   UNIQUE KEY `uq_users_employee_id` (`employee_id`),
   UNIQUE KEY `uq_users_username` (`username`),
   UNIQUE KEY `uq_users_email` (`email`),
+  KEY `idx_users_role_id` (`role_id`),
   CONSTRAINT `fk_users_employee`
     FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`)
-    ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB;
-
-CREATE TABLE `roles` (
-  `id`          BIGINT NOT NULL AUTO_INCREMENT,
-  `name`        VARCHAR(100) NOT NULL COMMENT 'Admin, Employee, Immediate Supervisor, HR, Accounting, Cost Center Signatory, Budget, Chancellor, Cashier',
-  `description` VARCHAR(255) NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_roles_name` (`name`)
-) ENGINE=InnoDB;
-
-CREATE TABLE `user_roles` (
-  `user_id` BIGINT NOT NULL,
-  `role_id` BIGINT NOT NULL,
-  PRIMARY KEY (`user_id`, `role_id`),
-  KEY `idx_user_roles_role_id` (`role_id`),
-  CONSTRAINT `fk_user_roles_user`
-    FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_user_roles_role`
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT `fk_users_role`
     FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
