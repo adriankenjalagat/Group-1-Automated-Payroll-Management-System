@@ -17,14 +17,6 @@ USE `payroll_db`;
 -- 0. LOOKUP TABLES
 -- =============================================================================
 
-CREATE TABLE `employment_types` (
-  `id`   BIGINT NOT NULL AUTO_INCREMENT,
-  `code` VARCHAR(50)  NOT NULL COMMENT 'REGULAR, CONTRACTUAL, JO, LECTURER',
-  `name` VARCHAR(150) NOT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_employment_types_code` (`code`)
-) ENGINE=InnoDB;
-
 CREATE TABLE `slip_types` (
   `id`   BIGINT NOT NULL AUTO_INCREMENT,
   `code` VARCHAR(50)  NOT NULL COMMENT 'ORAS, BURAS',
@@ -54,6 +46,7 @@ CREATE TABLE `employees` (
   `first_name`      VARCHAR(100) NOT NULL,
   `middle_name`     VARCHAR(100) NULL,
   `birth_date`      DATE         NOT NULL,
+  `employment_type` ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NOT NULL DEFAULT 'REGULAR',
   `bank_account_no` VARCHAR(50)  NULL,
   `tin`             VARCHAR(50)  NULL,
   `gsis_no`         VARCHAR(50)  NULL,
@@ -63,6 +56,7 @@ CREATE TABLE `employees` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_employees_employee_no` (`employee_no`),
   KEY `idx_employees_status_id` (`status_id`),
+  KEY `idx_employees_employment_type` (`employment_type`),
   CONSTRAINT `fk_employees_status`
     FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
@@ -214,26 +208,26 @@ CREATE TABLE `payroll_periods` (
 ) ENGINE=InnoDB;
 
 CREATE TABLE `appointments` (
-  `id`                 BIGINT NOT NULL AUTO_INCREMENT,
-  `employee_id`        BIGINT         NOT NULL,
-  `office_id`          BIGINT         NOT NULL,
-  `cost_center_id`     BIGINT         NOT NULL,
-  `fund_id`            BIGINT         NOT NULL,
-  `employment_type_id` BIGINT         NOT NULL,
-  `position_title`     VARCHAR(150)   NOT NULL,
-  `salary_grade`       VARCHAR(20)    NULL,
-  `step_increment`     INT            NULL,
-  `monthly_rate`       DECIMAL(14, 2) NULL,
-  `daily_rate`         DECIMAL(14, 2) NULL,
-  `hourly_rate`        DECIMAL(14, 2) NULL,
-  `effective_from`     DATE           NOT NULL,
-  `effective_to`       DATE           NULL,
+  `id`              BIGINT NOT NULL AUTO_INCREMENT,
+  `employee_id`     BIGINT         NOT NULL,
+  `office_id`       BIGINT         NOT NULL,
+  `cost_center_id`  BIGINT         NOT NULL,
+  `fund_id`         BIGINT         NOT NULL,
+  `employment_type` ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NOT NULL DEFAULT 'REGULAR',
+  `position_title`  VARCHAR(150)   NOT NULL,
+  `salary_grade`    VARCHAR(20)    NULL,
+  `step_increment`  INT            NULL,
+  `monthly_rate`    DECIMAL(14, 2) NULL,
+  `daily_rate`      DECIMAL(14, 2) NULL,
+  `hourly_rate`     DECIMAL(14, 2) NULL,
+  `effective_from`  DATE           NOT NULL,
+  `effective_to`    DATE           NULL,
   PRIMARY KEY (`id`),
   KEY `idx_appointments_employee_id` (`employee_id`),
   KEY `idx_appointments_office_id` (`office_id`),
   KEY `idx_appointments_cost_center_id` (`cost_center_id`),
   KEY `idx_appointments_fund_id` (`fund_id`),
-  KEY `idx_appointments_employment_type_id` (`employment_type_id`),
+  KEY `idx_appointments_employment_type` (`employment_type`),
   CONSTRAINT `fk_appointments_employee`
     FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -245,9 +239,6 @@ CREATE TABLE `appointments` (
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_appointments_fund`
     FOREIGN KEY (`fund_id`) REFERENCES `funds` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_appointments_employment_type`
-    FOREIGN KEY (`employment_type_id`) REFERENCES `employment_types` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
@@ -298,16 +289,13 @@ CREATE TABLE `document_types` (
 ) ENGINE=InnoDB;
 
 CREATE TABLE `document_type_employment_types` (
-  `document_type_id`   BIGINT NOT NULL,
-  `employment_type_id` BIGINT NOT NULL,
-  PRIMARY KEY (`document_type_id`, `employment_type_id`),
-  KEY `idx_dtet_employment_type_id` (`employment_type_id`),
+  `document_type_id` BIGINT NOT NULL,
+  `employment_type`  ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NOT NULL,
+  PRIMARY KEY (`document_type_id`, `employment_type`),
+  KEY `idx_dtet_employment_type` (`employment_type`),
   CONSTRAINT `fk_dtet_document_type`
     FOREIGN KEY (`document_type_id`) REFERENCES `document_types` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_dtet_employment_type`
-    FOREIGN KEY (`employment_type_id`) REFERENCES `employment_types` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE
+    ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE `document_submissions` (
@@ -505,24 +493,24 @@ CREATE TABLE `leave_records` (
 ) ENGINE=InnoDB;
 
 CREATE TABLE `payroll_batches` (
-  `id`                 BIGINT NOT NULL AUTO_INCREMENT,
-  `period_id`          BIGINT         NOT NULL,
-  `office_id`          BIGINT         NOT NULL,
-  `cost_center_id`     BIGINT         NOT NULL,
-  `fund_id`            BIGINT         NOT NULL,
-  `employment_type_id` BIGINT         NOT NULL COMMENT 'grouped by payroll type',
-  `batch_no`           VARCHAR(100)   NOT NULL,
-  `total_gross`        DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
-  `total_deductions`   DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
-  `total_net`          DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
-  `status_id`          BIGINT         NOT NULL,
+  `id`               BIGINT NOT NULL AUTO_INCREMENT,
+  `period_id`        BIGINT         NOT NULL,
+  `office_id`        BIGINT         NOT NULL,
+  `cost_center_id`   BIGINT         NOT NULL,
+  `fund_id`          BIGINT         NOT NULL,
+  `employment_type`  ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NOT NULL DEFAULT 'REGULAR' COMMENT 'grouped by payroll type',
+  `batch_no`         VARCHAR(100)   NOT NULL,
+  `total_gross`      DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
+  `total_deductions` DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
+  `total_net`        DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
+  `status_id`        BIGINT         NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_payroll_batches_batch_no` (`batch_no`),
   KEY `idx_payroll_batches_period_id` (`period_id`),
   KEY `idx_payroll_batches_office_id` (`office_id`),
   KEY `idx_payroll_batches_cost_center_id` (`cost_center_id`),
   KEY `idx_payroll_batches_fund_id` (`fund_id`),
-  KEY `idx_payroll_batches_emp_type_id` (`employment_type_id`),
+  KEY `idx_payroll_batches_emp_type` (`employment_type`),
   KEY `idx_payroll_batches_status_id` (`status_id`),
   CONSTRAINT `fk_payroll_batches_period`
     FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
@@ -535,9 +523,6 @@ CREATE TABLE `payroll_batches` (
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_payroll_batches_fund`
     FOREIGN KEY (`fund_id`) REFERENCES `funds` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_payroll_batches_employment_type`
-    FOREIGN KEY (`employment_type_id`) REFERENCES `employment_types` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_payroll_batches_status`
     FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
@@ -800,28 +785,25 @@ CREATE TABLE `journal_entry_lines` (
 ) ENGINE=InnoDB;
 
 CREATE TABLE `historical_uploads` (
-  `id`                 BIGINT NOT NULL AUTO_INCREMENT,
-  `period_id`          BIGINT       NULL,
-  `office_id`          BIGINT       NULL,
-  `employment_type_id` BIGINT       NULL,
-  `uploaded_by`        BIGINT       NOT NULL,
-  `file_name`          VARCHAR(255) NOT NULL,
-  `file_path`          VARCHAR(500) NOT NULL,
-  `description`        VARCHAR(500) NULL,
-  `uploaded_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `id`              BIGINT NOT NULL AUTO_INCREMENT,
+  `period_id`       BIGINT       NULL,
+  `office_id`       BIGINT       NULL,
+  `employment_type` ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NULL,
+  `uploaded_by`     BIGINT       NOT NULL,
+  `file_name`       VARCHAR(255) NOT NULL,
+  `file_path`       VARCHAR(500) NOT NULL,
+  `description`     VARCHAR(500) NULL,
+  `uploaded_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_historical_uploads_period_id` (`period_id`),
   KEY `idx_historical_uploads_office_id` (`office_id`),
-  KEY `idx_historical_uploads_emp_type_id` (`employment_type_id`),
+  KEY `idx_historical_uploads_emp_type` (`employment_type`),
   KEY `idx_historical_uploads_uploaded_by` (`uploaded_by`),
   CONSTRAINT `fk_historical_uploads_period`
     FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
     ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `fk_historical_uploads_office`
     FOREIGN KEY (`office_id`) REFERENCES `offices` (`id`)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT `fk_historical_uploads_emp_type`
-    FOREIGN KEY (`employment_type_id`) REFERENCES `employment_types` (`id`)
     ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `fk_historical_uploads_uploaded_by`
     FOREIGN KEY (`uploaded_by`) REFERENCES `users` (`id`)

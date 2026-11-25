@@ -31,12 +31,11 @@ const PAYSLIP_SELECT_SQL = `
     TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
     o.name AS department,
     pp.label AS period,
-    et.name AS payroll_title
+    pb.employment_type AS payroll_title
   FROM payslips ps
   JOIN payroll_items pi ON pi.id = ps.payroll_item_id
   JOIN payroll_batches pb ON pb.id = pi.batch_id
   JOIN payroll_periods pp ON pp.id = pb.period_id
-  JOIN employment_types et ON et.id = pb.employment_type_id
   JOIN appointments a ON a.id = pi.appointment_id
   JOIN employees e ON e.id = a.employee_id
   JOIN offices o ON o.id = a.office_id

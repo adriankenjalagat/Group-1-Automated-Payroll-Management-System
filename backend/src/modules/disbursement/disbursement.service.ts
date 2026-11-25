@@ -116,7 +116,7 @@ const BATCH_DETAIL_SQL = `
          o.name AS office_name,
          f.code AS fund_code,
          st_slip.code AS slip_type_code,
-         et.name AS emp_type_name,
+         pb.employment_type AS emp_type_name,
          st.code AS status_code,
          pi.id AS payroll_item_id,
          e.id AS employee_id,
@@ -128,7 +128,6 @@ const BATCH_DETAIL_SQL = `
   JOIN offices o ON o.id = pb.office_id
   JOIN funds f ON f.id = pb.fund_id
   JOIN slip_types st_slip ON st_slip.id = f.slip_type_id
-  JOIN employment_types et ON et.id = pb.employment_type_id
   JOIN statuses st ON st.id = pb.status_id
   LEFT JOIN LATERAL (
     SELECT * FROM payroll_items WHERE batch_id = pb.id ORDER BY id ASC LIMIT 1

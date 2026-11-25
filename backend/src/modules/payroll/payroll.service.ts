@@ -215,8 +215,8 @@ const PAYROLL_SELECT_SQL = `
     pp.label AS period_label,
     o.name AS office_name,
     f.code AS fund_code,
-    et.code AS emp_type_code,
-    et.name AS emp_type_name,
+    pb.employment_type AS emp_type_code,
+    pb.employment_type AS emp_type_name,
     pi.id AS item_id,
     pi.days_worked,
     pi.absences,
@@ -233,7 +233,6 @@ const PAYROLL_SELECT_SQL = `
   JOIN payroll_periods pp ON pp.id = pb.period_id
   JOIN offices o ON o.id = pb.office_id
   JOIN funds f ON f.id = pb.fund_id
-  JOIN employment_types et ON et.id = pb.employment_type_id
   LEFT JOIN LATERAL (
     SELECT * FROM payroll_items WHERE batch_id = pb.id ORDER BY id ASC LIMIT 1
   ) pi ON TRUE
@@ -326,10 +325,9 @@ export const payrollService = {
         apptRes = await client.query(
           `SELECT a.*, e.employee_no,
                   TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
-                  et.code AS emp_type_code
+                  COALESCE(a.employment_type, e.employment_type, 'REGULAR') AS emp_type_code
            FROM appointments a
            JOIN employees e ON e.id = a.employee_id
-           JOIN employment_types et ON et.id = a.employment_type_id
            WHERE e.employee_no = $1 OR (e.id::text = $1 AND $1 ~ '^[0-9]+$')
            ORDER BY a.effective_from DESC, a.id DESC
            LIMIT 1`,
@@ -340,10 +338,9 @@ export const payrollService = {
         apptRes = await client.query(
           `SELECT a.*, e.employee_no,
                   TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
-                  et.code AS emp_type_code
+                  COALESCE(a.employment_type, e.employment_type, 'REGULAR') AS emp_type_code
            FROM appointments a
            JOIN employees e ON e.id = a.employee_id
-           JOIN employment_types et ON et.id = a.employment_type_id
            ORDER BY a.id ASC
            LIMIT 1`,
         )
@@ -398,7 +395,7 @@ export const payrollService = {
 
       const batchIns = await client.query(
         `INSERT INTO payroll_batches (
-           period_id, office_id, cost_center_id, fund_id, employment_type_id,
+           period_id, office_id, cost_center_id, fund_id, employment_type,
            batch_no, total_gross, total_deductions, total_net, status_id
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id`,
@@ -407,7 +404,7 @@ export const payrollService = {
           appt.office_id,
           appt.cost_center_id,
           appt.fund_id,
-          appt.employment_type_id,
+          appt.emp_type_code || 'REGULAR',
           batchNo,
           breakdown.grossPay,
           breakdown.totalDeductions,

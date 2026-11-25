@@ -211,19 +211,83 @@ export async function runMigrations(): Promise<void> {
       `)
     }
 
-    // 3. Apply the 43-table normalized PostgreSQL schema directly in `public`
-    console.log('[Migration] Applying 43-table normalized schema.sql...')
+    // 2b. If upgrading an existing 43-table DB that still has `employment_types`, merge it cleanly into `employees` BEFORE applying schema.sql
+    const hasEmpTypesTable = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'employment_types'
+      LIMIT 1
+    `)
+    if (hasEmpTypesTable.rows.length > 0) {
+      console.log('[Migration] Merging separate employment_types table into employees.employment_type...')
+      await client.query(`
+        ALTER TABLE employees ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) NOT NULL DEFAULT 'REGULAR';
+        ALTER TABLE appointments ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) NOT NULL DEFAULT 'REGULAR';
+        ALTER TABLE payroll_batches ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) NOT NULL DEFAULT 'REGULAR';
+        ALTER TABLE historical_uploads ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) NULL;
+
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'appointments' AND column_name = 'employment_type_id') THEN
+            UPDATE appointments a
+            SET employment_type = et.code
+            FROM employment_types et
+            WHERE a.employment_type_id = et.id;
+
+            UPDATE employees e
+            SET employment_type = sub.employment_type
+            FROM (
+              SELECT DISTINCT ON (employee_id) employee_id, employment_type
+              FROM appointments
+              ORDER BY employee_id, effective_from DESC, id DESC
+            ) sub
+            WHERE e.id = sub.employee_id;
+
+            ALTER TABLE appointments DROP COLUMN IF EXISTS employment_type_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'payroll_batches' AND column_name = 'employment_type_id') THEN
+            UPDATE payroll_batches pb
+            SET employment_type = et.code
+            FROM employment_types et
+            WHERE pb.employment_type_id = et.id;
+
+            ALTER TABLE payroll_batches DROP COLUMN IF EXISTS employment_type_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'historical_uploads' AND column_name = 'employment_type_id') THEN
+            UPDATE historical_uploads hu
+            SET employment_type = et.code
+            FROM employment_types et
+            WHERE hu.employment_type_id = et.id;
+
+            ALTER TABLE historical_uploads DROP COLUMN IF EXISTS employment_type_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'document_type_employment_types' AND column_name = 'employment_type_id') THEN
+            DROP TABLE IF EXISTS document_type_employment_types CASCADE;
+            CREATE TABLE document_type_employment_types (
+              document_type_id BIGINT NOT NULL,
+              employment_type VARCHAR(50) NOT NULL
+                CHECK (employment_type IN ('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER')),
+              PRIMARY KEY (document_type_id, employment_type),
+              CONSTRAINT fk_dtet_document_type
+                FOREIGN KEY (document_type_id) REFERENCES document_types (id)
+                ON DELETE CASCADE ON UPDATE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_dtet_employment_type ON document_type_employment_types (employment_type);
+          END IF;
+        END $$;
+
+        DROP TABLE IF EXISTS employment_types CASCADE;
+      `)
+    }
+
+    // 3. Apply the 42-table normalized PostgreSQL schema directly in `public`
+    console.log('[Migration] Applying 42-table normalized schema.sql (employment_type merged into employees)...')
     await client.query(readSqlFile('schema.sql'))
 
     // 4. Seed required lookup & reference data (idempotent)
     await client.query(`
-      INSERT INTO employment_types (code, name) VALUES
-        ('REGULAR', 'Regular / Permanent'),
-        ('CONTRACTUAL', 'Contractual'),
-        ('JO', 'Job Order'),
-        ('LECTURER', 'Part-Time / Visiting Lecturer')
-      ON CONFLICT (code) DO NOTHING;
-
       INSERT INTO slip_types (code, name) VALUES
         ('ORAS', 'Obligation Request and Status'),
         ('BURAS', 'Budget Utilization Request and Status')
@@ -378,9 +442,6 @@ export async function runMigrations(): Promise<void> {
         await client.query(`SELECT id FROM statuses WHERE category = 'EMPLOYEE' AND code = 'ACTIVE' LIMIT 1`)
       ).rows[0].id
       const defaultFundId = (await client.query(`SELECT id FROM funds WHERE code = 'F01' LIMIT 1`)).rows[0].id
-      const regularTypeId = (
-        await client.query(`SELECT id FROM employment_types WHERE code = 'REGULAR' LIMIT 1`)
-      ).rows[0].id
 
       for (let i = 0; i < DEFAULT_SEED_USERS.length; i++) {
         const u = DEFAULT_SEED_USERS[i]
@@ -389,10 +450,10 @@ export async function runMigrations(): Promise<void> {
 
         const empRes = await client.query(
           `INSERT INTO employees (
-             employee_no, last_name, first_name, middle_name, birth_date, status_id
-           ) VALUES ($1, $2, $3, NULL, '1990-01-01', $4)
+             employee_no, last_name, first_name, middle_name, birth_date, employment_type, status_id
+           ) VALUES ($1, $2, $3, NULL, '1990-01-01', $4, $5)
            RETURNING id`,
-          [empNo, u.lastName, u.firstName, activeEmpStatusId],
+          [empNo, u.lastName, u.firstName, u.empTypeCode || 'REGULAR', activeEmpStatusId],
         )
         const empId = empRes.rows[0].id
 
@@ -411,10 +472,10 @@ export async function runMigrations(): Promise<void> {
         if (officeId && ccId) {
           await client.query(
             `INSERT INTO appointments (
-               employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+               employee_id, office_id, cost_center_id, fund_id, employment_type,
                position_title, monthly_rate, effective_from
              ) VALUES ($1, $2, $3, $4, $5, $6, 25000.00, '2026-01-01')`,
-            [empId, officeId, ccId, defaultFundId, regularTypeId, u.position],
+            [empId, officeId, ccId, defaultFundId, u.empTypeCode || 'REGULAR', u.position],
           )
         }
 

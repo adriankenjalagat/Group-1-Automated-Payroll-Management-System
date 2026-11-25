@@ -273,8 +273,8 @@ export const usersService = {
         const tempEmpNo = `EMP-TMP-${Date.now()}-${Math.floor(Math.random() * 10000)}`
 
         const empRes = await client.query(
-          `INSERT INTO employees (employee_no, last_name, first_name, middle_name, birth_date, status_id)
-           VALUES ($1, $2, $3, $4, '1990-01-01', $5)
+          `INSERT INTO employees (employee_no, last_name, first_name, middle_name, birth_date, employment_type, status_id)
+           VALUES ($1, $2, $3, $4, '1990-01-01', 'REGULAR', $5)
            RETURNING id`,
           [tempEmpNo, lastName, firstName, middleName, activeStatusId],
         )
@@ -295,16 +295,13 @@ export const usersService = {
 
         const { officeId, costCenterId } = await ensureOfficeAndCostCenter(client, office, costCenter)
         const fundId = Number((await client.query(`SELECT id FROM funds ORDER BY id ASC LIMIT 1`)).rows[0].id)
-        const empTypeId = Number(
-          (await client.query(`SELECT id FROM employment_types ORDER BY id ASC LIMIT 1`)).rows[0].id,
-        )
 
         await client.query(
           `INSERT INTO appointments (
-             employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+             employee_id, office_id, cost_center_id, fund_id, employment_type,
              position_title, monthly_rate, effective_from
-           ) VALUES ($1, $2, $3, $4, $5, $6, 25000.00, CURRENT_DATE)`,
-          [parsedEmployeeId, officeId, costCenterId, fundId, empTypeId, primaryRole],
+           ) VALUES ($1, $2, $3, $4, 'REGULAR', $5, 25000.00, CURRENT_DATE)`,
+          [parsedEmployeeId, officeId, costCenterId, fundId, primaryRole],
         )
       }
 
