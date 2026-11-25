@@ -380,8 +380,77 @@ export async function runMigrations(): Promise<void> {
       `)
     }
 
-    // 3. Apply the 33-table normalized PostgreSQL schema directly in `public`
-    console.log('[Migration] Applying 33-table normalized schema.sql (documents unified)...')
+    // 2g. If upgrading an existing DB that still has `payroll_periods`, merge period fields directly into `payrolls` (and period_label into referencing tables)
+    const hasPayrollPeriods = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'payroll_periods'
+      LIMIT 1
+    `)
+    if (hasPayrollPeriods.rows.length > 0) {
+      console.log('[Migration] Merging payroll_periods into payrolls and switching period_id FKs to period_label...')
+      await client.query(`
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'payrolls' AND column_name = 'period_id') THEN
+            ALTER TABLE payrolls ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NOT NULL DEFAULT 'November 2026';
+            ALTER TABLE payrolls ADD COLUMN IF NOT EXISTS period_start DATE NULL;
+            ALTER TABLE payrolls ADD COLUMN IF NOT EXISTS period_end DATE NULL;
+            ALTER TABLE payrolls ADD COLUMN IF NOT EXISTS submission_deadline DATE NULL;
+
+            UPDATE payrolls p
+            SET period_label = pp.label,
+                period_start = pp.period_start,
+                period_end = pp.period_end,
+                submission_deadline = pp.submission_deadline
+            FROM payroll_periods pp
+            WHERE p.period_id = pp.id;
+
+            ALTER TABLE payrolls DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'employee_components' AND column_name = 'period_id') THEN
+            ALTER TABLE employee_components ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NULL;
+            UPDATE employee_components ec
+            SET period_label = pp.label
+            FROM payroll_periods pp
+            WHERE ec.period_id = pp.id;
+            ALTER TABLE employee_components DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'documents' AND column_name = 'period_id') THEN
+            ALTER TABLE documents ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NOT NULL DEFAULT 'November 2026';
+            UPDATE documents d
+            SET period_label = pp.label
+            FROM payroll_periods pp
+            WHERE d.period_id = pp.id;
+            ALTER TABLE documents DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dtr_imports' AND column_name = 'period_id') THEN
+            ALTER TABLE dtr_imports ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NOT NULL DEFAULT 'November 2026';
+            UPDATE dtr_imports di
+            SET period_label = pp.label
+            FROM payroll_periods pp
+            WHERE di.period_id = pp.id;
+            ALTER TABLE dtr_imports DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'historical_uploads' AND column_name = 'period_id') THEN
+            ALTER TABLE historical_uploads ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NULL;
+            UPDATE historical_uploads hu
+            SET period_label = pp.label
+            FROM payroll_periods pp
+            WHERE hu.period_id = pp.id;
+            ALTER TABLE historical_uploads DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+        END $$;
+
+        DROP TABLE IF EXISTS payroll_periods CASCADE;
+      `)
+    }
+
+    // 3. Apply the 32-table normalized PostgreSQL schema directly in `public`
+    console.log('[Migration] Applying 32-table normalized schema.sql (payroll_periods merged into payrolls)...')
     await client.query(readSqlFile('schema.sql'))
 
     // 4. Seed required lookup & reference data (idempotent)
@@ -473,16 +542,6 @@ export async function runMigrations(): Promise<void> {
       ON CONFLICT (code) DO NOTHING;
     `)
 
-    // Default payroll period if empty
-    const periodCount = await client.query('SELECT COUNT(*)::int AS cnt FROM payroll_periods')
-    if (periodCount.rows[0].cnt === 0) {
-      await client.query(`
-        INSERT INTO payroll_periods (label, period_start, period_end, submission_deadline, status_id)
-        SELECT 'November 2026', '2026-11-01', '2026-11-30', '2026-11-25', id
-        FROM statuses WHERE category = 'PERIOD' AND code = 'OPEN' LIMIT 1;
-      `)
-    }
-
     // Default approval workflow (5 baseline steps) if empty
     const wfCount = await client.query('SELECT COUNT(*)::int AS cnt FROM workflows')
     if (wfCount.rows[0].cnt === 0) {
@@ -562,7 +621,7 @@ export async function runMigrations(): Promise<void> {
     }
 
     await client.query('COMMIT')
-    console.log('[Migration] All 33-table schema migrations and checks completed successfully.')
+    console.log('[Migration] All 32-table schema migrations and checks completed successfully.')
   } catch (error) {
     await client.query('ROLLBACK')
     console.error('[Migration] Migration failed:', error)

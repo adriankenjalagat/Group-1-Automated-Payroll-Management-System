@@ -1,6 +1,6 @@
 -- =============================================================================
 -- schema_mysql.sql
--- MySQL 8.0+ / MySQL Workbench Compatible Schema (33 Tables, documents unified)
+-- MySQL 8.0+ / MySQL Workbench Compatible Schema (32 Tables, payroll_periods merged into payrolls)
 -- MSU-Naawan Automated Payroll Management System
 -- Ready for:
 --   1) MySQL Workbench -> File -> Import -> Reverse Engineer MySQL Create Script
@@ -174,20 +174,6 @@ CREATE TABLE `funds` (
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE `payroll_periods` (
-  `id`                  BIGINT NOT NULL AUTO_INCREMENT,
-  `label`               VARCHAR(100) NOT NULL,
-  `period_start`        DATE         NOT NULL,
-  `period_end`          DATE         NOT NULL,
-  `submission_deadline` DATE         NOT NULL,
-  `status_id`           BIGINT       NOT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_payroll_periods_status_id` (`status_id`),
-  CONSTRAINT `fk_payroll_periods_status`
-    FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
-
 CREATE TABLE `appointments` (
   `id`              BIGINT NOT NULL AUTO_INCREMENT,
   `employee_id`     BIGINT         NOT NULL,
@@ -238,7 +224,7 @@ CREATE TABLE `employee_components` (
   `id`             BIGINT NOT NULL AUTO_INCREMENT,
   `employee_id`    BIGINT         NOT NULL,
   `component_id`   BIGINT         NOT NULL,
-  `period_id`      BIGINT         NULL COMMENT 'nullable: set for one-time payments / adjustments',
+  `period_label`   VARCHAR(100)   NULL COMMENT 'nullable: set for one-time payments / adjustments',
   `is_one_time`    TINYINT(1)     NOT NULL DEFAULT 0,
   `amount`         DECIMAL(14, 2) NOT NULL,
   `effective_from` DATE           NOT NULL,
@@ -246,16 +232,13 @@ CREATE TABLE `employee_components` (
   PRIMARY KEY (`id`),
   KEY `idx_employee_components_emp_id` (`employee_id`),
   KEY `idx_employee_components_comp_id` (`component_id`),
-  KEY `idx_employee_components_period_id` (`period_id`),
+  KEY `idx_employee_components_period_label` (`period_label`),
   CONSTRAINT `fk_employee_components_employee`
     FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`)
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `fk_employee_components_component`
     FOREIGN KEY (`component_id`) REFERENCES `pay_components` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_employee_components_period`
-    FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
-    ON DELETE SET NULL ON UPDATE CASCADE
+    ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- =============================================================================
@@ -264,7 +247,7 @@ CREATE TABLE `employee_components` (
 
 CREATE TABLE `documents` (
   `id`              BIGINT NOT NULL AUTO_INCREMENT,
-  `period_id`       BIGINT       NOT NULL,
+  `period_label`    VARCHAR(100) NOT NULL DEFAULT 'November 2026',
   `office_id`       BIGINT       NOT NULL,
   `employee_id`     BIGINT       NOT NULL,
   `submitted_by`    BIGINT       NOT NULL,
@@ -278,15 +261,12 @@ CREATE TABLE `documents` (
   `is_late`         TINYINT(1)   NOT NULL DEFAULT 0,
   `status_id`       BIGINT       NOT NULL,
   PRIMARY KEY (`id`),
-  KEY `idx_documents_period_office` (`period_id`, `office_id`),
+  KEY `idx_documents_period_office` (`period_label`, `office_id`),
   KEY `idx_documents_office_id` (`office_id`),
   KEY `idx_documents_employee_id` (`employee_id`),
   KEY `idx_documents_submitted_by` (`submitted_by`),
   KEY `idx_documents_status_id` (`status_id`),
   KEY `idx_documents_type` (`document_type`),
-  CONSTRAINT `fk_documents_period`
-    FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_documents_office`
     FOREIGN KEY (`office_id`) REFERENCES `offices` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -367,21 +347,18 @@ CREATE TABLE `transmittal_items` (
 -- =============================================================================
 
 CREATE TABLE `dtr_imports` (
-  `id`          BIGINT NOT NULL AUTO_INCREMENT,
-  `period_id`   BIGINT       NOT NULL,
-  `office_id`   BIGINT       NOT NULL,
-  `imported_by` BIGINT       NOT NULL,
-  `file_name`   VARCHAR(255) NOT NULL COMMENT 'MyWork export file',
-  `row_count`   INT          NOT NULL DEFAULT 0,
-  `error_count` INT          NOT NULL DEFAULT 0,
-  `imported_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `id`           BIGINT NOT NULL AUTO_INCREMENT,
+  `period_label` VARCHAR(100) NOT NULL DEFAULT 'November 2026',
+  `office_id`    BIGINT       NOT NULL,
+  `imported_by`  BIGINT       NOT NULL,
+  `file_name`    VARCHAR(255) NOT NULL COMMENT 'MyWork export file',
+  `row_count`    INT          NOT NULL DEFAULT 0,
+  `error_count`  INT          NOT NULL DEFAULT 0,
+  `imported_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_dtr_imports_period_office` (`period_id`, `office_id`),
+  KEY `idx_dtr_imports_period_office` (`period_label`, `office_id`),
   KEY `idx_dtr_imports_office_id` (`office_id`),
   KEY `idx_dtr_imports_imported_by` (`imported_by`),
-  CONSTRAINT `fk_dtr_imports_period`
-    FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_dtr_imports_office`
     FOREIGN KEY (`office_id`) REFERENCES `offices` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -448,7 +425,10 @@ CREATE TABLE `leave_records` (
 CREATE TABLE `payrolls` (
   `id`                       BIGINT NOT NULL AUTO_INCREMENT,
   `batch_no`                 VARCHAR(100)   NOT NULL,
-  `period_id`                BIGINT         NOT NULL,
+  `period_label`             VARCHAR(100)   NOT NULL DEFAULT 'November 2026',
+  `period_start`             DATE           NULL,
+  `period_end`               DATE           NULL,
+  `submission_deadline`      DATE           NULL,
   `office_id`                BIGINT         NOT NULL,
   `cost_center_id`           BIGINT         NOT NULL,
   `fund_id`                  BIGINT         NOT NULL,
@@ -472,16 +452,13 @@ CREATE TABLE `payrolls` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_payrolls_batch_no` (`batch_no`),
   UNIQUE KEY `uq_payrolls_register_no` (`register_no`),
-  KEY `idx_payrolls_period_id` (`period_id`),
+  KEY `idx_payrolls_period_label` (`period_label`),
   KEY `idx_payrolls_office_id` (`office_id`),
   KEY `idx_payrolls_cost_center_id` (`cost_center_id`),
   KEY `idx_payrolls_fund_id` (`fund_id`),
   KEY `idx_payrolls_appointment_id` (`appointment_id`),
   KEY `idx_payrolls_emp_type` (`employment_type`),
   KEY `idx_payrolls_status_id` (`status_id`),
-  CONSTRAINT `fk_payrolls_period`
-    FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_payrolls_office`
     FOREIGN KEY (`office_id`) REFERENCES `offices` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -688,7 +665,7 @@ CREATE TABLE `journal_entry_lines` (
 
 CREATE TABLE `historical_uploads` (
   `id`              BIGINT NOT NULL AUTO_INCREMENT,
-  `period_id`       BIGINT       NULL,
+  `period_label`    VARCHAR(100) NULL,
   `office_id`       BIGINT       NULL,
   `employment_type` ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NULL,
   `uploaded_by`     BIGINT       NOT NULL,
@@ -697,13 +674,10 @@ CREATE TABLE `historical_uploads` (
   `description`     VARCHAR(500) NULL,
   `uploaded_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_historical_uploads_period_id` (`period_id`),
+  KEY `idx_historical_uploads_period_label` (`period_label`),
   KEY `idx_historical_uploads_office_id` (`office_id`),
   KEY `idx_historical_uploads_emp_type` (`employment_type`),
   KEY `idx_historical_uploads_uploaded_by` (`uploaded_by`),
-  CONSTRAINT `fk_historical_uploads_period`
-    FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
-    ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT `fk_historical_uploads_office`
     FOREIGN KEY (`office_id`) REFERENCES `offices` (`id`)
     ON DELETE SET NULL ON UPDATE CASCADE,

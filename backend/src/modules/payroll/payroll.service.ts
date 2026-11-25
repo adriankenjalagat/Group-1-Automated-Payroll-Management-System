@@ -219,7 +219,7 @@ const PAYROLL_SELECT_SQL = `
     p.updated_at,
     st.name AS status_name,
     st.code AS status_code,
-    pp.label AS period_label,
+    p.period_label,
     o.name AS office_name,
     f.code AS fund_code,
     e.id AS employee_db_id,
@@ -231,7 +231,6 @@ const PAYROLL_SELECT_SQL = `
     w.step_name AS current_stage_name
   FROM payrolls p
   JOIN statuses st ON st.id = p.status_id
-  JOIN payroll_periods pp ON pp.id = p.period_id
   JOIN offices o ON o.id = p.office_id
   JOIN funds f ON f.id = p.fund_id
   JOIN appointments a ON a.id = p.appointment_id
@@ -277,7 +276,7 @@ export const payrollService = {
     let queryText = PAYROLL_SELECT_SQL
     const params: any[] = []
     if (period) {
-      queryText += ` WHERE LOWER(pp.label) = LOWER($1)`
+      queryText += ` WHERE LOWER(p.period_label) = LOWER($1)`
       params.push(period)
     }
     queryText += ` ORDER BY p.id ASC`
@@ -368,26 +367,7 @@ export const payrollService = {
         isProratedFirstSalary: input.isProratedFirstSalary,
       })
 
-      // Resolve or create payroll_period
-      let periodRes = await client.query(
-        `SELECT id FROM payroll_periods WHERE LOWER(label) = LOWER($1) LIMIT 1`,
-        [input.period || 'November 2026'],
-      )
-      let periodId: number
-      if (periodRes.rows.length > 0) {
-        periodId = Number(periodRes.rows[0].id)
-      } else {
-        const openSt = (
-          await client.query(`SELECT id FROM statuses WHERE category = 'PERIOD' AND code = 'OPEN' LIMIT 1`)
-        ).rows[0].id
-        const insP = await client.query(
-          `INSERT INTO payroll_periods (label, period_start, period_end, submission_deadline, status_id)
-           VALUES ($1, CURRENT_DATE, CURRENT_DATE + INTERVAL '30 days', CURRENT_DATE + INTERVAL '25 days', $2)
-           RETURNING id`,
-          [input.period || 'November 2026', openSt],
-        )
-        periodId = Number(insP.rows[0].id)
-      }
+      const periodLabel = input.period || 'November 2026'
 
       const pendingStId = (
         await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'PENDING' LIMIT 1`)
@@ -396,18 +376,20 @@ export const payrollService = {
 
       const payrollIns = await client.query(
         `INSERT INTO payrolls (
-           batch_no, period_id, office_id, cost_center_id, fund_id, appointment_id,
+           batch_no, period_label, period_start, period_end, submission_deadline,
+           office_id, cost_center_id, fund_id, appointment_id,
            employment_type, days_worked, absences, late_undertime_deduction,
            proration_factor, gross_pay, total_deductions, net_pay, breakdown, status_id
          ) VALUES (
-           $1, $2, $3, $4, $5, $6,
+           $1, $2, CURRENT_DATE, (CURRENT_DATE + INTERVAL '30 days')::date, (CURRENT_DATE + INTERVAL '25 days')::date,
+           $3, $4, $5, $6,
            $7, $8, $9, $10,
            1.0000, $11, $12, $13, $14::jsonb, $15
          )
          RETURNING id`,
         [
           batchNo,
-          periodId,
+          periodLabel,
           appt.office_id,
           appt.cost_center_id,
           appt.fund_id,

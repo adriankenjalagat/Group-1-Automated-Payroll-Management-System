@@ -53,7 +53,7 @@ export const attendanceService = {
               e.employee_no,
               TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
               COALESCE(o.name, 'General Administration') AS office_name,
-              pp.label AS period_label
+              di.period_label
        FROM dtr_records d
        JOIN employees e ON e.id = d.employee_id
        LEFT JOIN LATERAL (
@@ -61,7 +61,6 @@ export const attendanceService = {
        ) a ON TRUE
        LEFT JOIN offices o ON o.id = a.office_id
        LEFT JOIN dtr_imports di ON di.id = d.import_id
-       LEFT JOIN payroll_periods pp ON pp.id = di.period_id
        ORDER BY d.id DESC`,
     )
 

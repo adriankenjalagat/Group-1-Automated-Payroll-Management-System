@@ -31,11 +31,10 @@ const PAYSLIP_SELECT_SQL = `
     e.employee_no,
     TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
     o.name AS department,
-    pp.label AS period,
+    p.period_label AS period,
     p.employment_type AS payroll_title
   FROM payslips ps
   JOIN payrolls p ON p.id = ps.payroll_id
-  JOIN payroll_periods pp ON pp.id = p.period_id
   JOIN appointments a ON a.id = p.appointment_id
   JOIN employees e ON e.id = a.employee_id
   JOIN offices o ON o.id = a.office_id
@@ -79,7 +78,7 @@ export const payslipsService = {
     }
 
     if (options.period) {
-      conditions.push(`LOWER(pp.label) = LOWER($${pIdx++})`)
+      conditions.push(`LOWER(p.period_label) = LOWER($${pIdx++})`)
       params.push(options.period.trim())
     }
 

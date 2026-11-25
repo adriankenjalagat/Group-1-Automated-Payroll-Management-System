@@ -64,7 +64,7 @@ const SUBMISSION_SELECT_SQL = `
     d.is_late,
     e.employee_no,
     TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
-    pp.label AS period_label,
+    d.period_label,
     st.name AS status_name,
     d.file_path,
     d.remarks AS item_remarks,
@@ -77,7 +77,6 @@ const SUBMISSION_SELECT_SQL = `
     u_hr.username AS hr_username
   FROM documents d
   JOIN employees e ON e.id = d.employee_id
-  JOIN payroll_periods pp ON pp.id = d.period_id
   JOIN statuses st ON st.id = d.status_id
   LEFT JOIN logbook_verifications lv_sup ON lv_sup.document_id = d.id AND lv_sup.verification_stage = 'SUPERVISOR'
   LEFT JOIN users u_sup ON u_sup.id = lv_sup.verified_by
@@ -191,26 +190,7 @@ export const attachmentsService = {
     try {
       await client.query('BEGIN')
 
-      // Resolve period
-      let periodRes = await client.query(
-        `SELECT id FROM payroll_periods WHERE LOWER(label) = LOWER($1) LIMIT 1`,
-        [data.period || 'November 2026'],
-      )
-      let periodId: number
-      if (periodRes.rows.length > 0) {
-        periodId = Number(periodRes.rows[0].id)
-      } else {
-        const openStatus = (
-          await client.query(`SELECT id FROM statuses WHERE category = 'PERIOD' AND code = 'OPEN' LIMIT 1`)
-        ).rows[0].id
-        const insP = await client.query(
-          `INSERT INTO payroll_periods (label, period_start, period_end, submission_deadline, status_id)
-           VALUES ($1, CURRENT_DATE, CURRENT_DATE + INTERVAL '30 days', CURRENT_DATE + INTERVAL '25 days', $2)
-           RETURNING id`,
-          [data.period || 'November 2026', openStatus],
-        )
-        periodId = Number(insP.rows[0].id)
-      }
+      const periodLabel = data.period || 'November 2026'
 
       const officeId =
         emp.office_id ||
@@ -234,7 +214,7 @@ export const attachmentsService = {
 
       const docRes = await client.query(
         `INSERT INTO documents (
-           period_id, office_id, employee_id, submitted_by,
+           period_label, office_id, employee_id, submitted_by,
            document_type, employment_type, is_required,
            file_path, is_complete, remarks,
            submitted_at, is_late, status_id
@@ -242,7 +222,7 @@ export const attachmentsService = {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, CURRENT_TIMESTAMP, $10, $11)
          RETURNING id`,
         [
-          periodId,
+          periodLabel,
           officeId,
           emp.id,
           submittedBy,

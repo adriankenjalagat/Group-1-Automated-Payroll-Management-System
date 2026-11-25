@@ -114,7 +114,7 @@ const PAYROLL_DETAIL_SQL = `
   SELECT p.*,
          p.gross_pay AS total_gross,
          p.net_pay AS total_net,
-         pp.label AS period_label,
+         p.period_label,
          o.name AS office_name,
          f.code AS fund_code,
          st_slip.code AS slip_type_code,
@@ -125,7 +125,6 @@ const PAYROLL_DETAIL_SQL = `
          TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS employee_name,
          e.bank_account_no
   FROM payrolls p
-  JOIN payroll_periods pp ON pp.id = p.period_id
   JOIN offices o ON o.id = p.office_id
   JOIN funds f ON f.id = p.fund_id
   JOIN slip_types st_slip ON st_slip.id = f.slip_type_id
