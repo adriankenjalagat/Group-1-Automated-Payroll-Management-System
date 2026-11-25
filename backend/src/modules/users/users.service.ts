@@ -54,6 +54,7 @@ const USER_SELECT_SQL = `
   SELECT
     u.id,
     u.employee_id,
+    u.role,
     u.username,
     u.password_hash,
     u.email,
@@ -65,10 +66,7 @@ const USER_SELECT_SQL = `
     ) AS full_name,
     COALESCE(o.name, 'University Office') AS office,
     COALESCE(cc.name, o.name, 'University Office') AS cost_center,
-    COALESCE(
-      ARRAY_AGG(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL),
-      ARRAY['Employee']::text[]
-    ) AS roles
+    ARRAY[COALESCE(u.role, 'Employee')]::text[] AS roles
   FROM users u
   LEFT JOIN employees e ON e.id = u.employee_id
   LEFT JOIN LATERAL (
@@ -80,14 +78,9 @@ const USER_SELECT_SQL = `
   ) a ON TRUE
   LEFT JOIN offices o ON o.id = a.office_id
   LEFT JOIN cost_centers cc ON cc.id = a.cost_center_id
-  LEFT JOIN user_roles ur ON ur.user_id = u.id
-  LEFT JOIN roles r ON r.id = ur.role_id
 `
 
-const USER_GROUP_BY_SQL = `
-  GROUP BY u.id, u.employee_id, u.username, u.password_hash, u.email, u.is_active, u.last_login_at,
-           e.first_name, e.middle_name, e.last_name, o.name, cc.name
-`
+const USER_GROUP_BY_SQL = ``
 
 function mapUserRow(row: any, includePassword = false): UserAccount {
   const safeRoles = Array.isArray(row.roles)
@@ -273,8 +266,8 @@ export const usersService = {
         const tempEmpNo = `EMP-TMP-${Date.now()}-${Math.floor(Math.random() * 10000)}`
 
         const empRes = await client.query(
-          `INSERT INTO employees (employee_no, last_name, first_name, middle_name, birth_date, status_id)
-           VALUES ($1, $2, $3, $4, '1990-01-01', $5)
+          `INSERT INTO employees (employee_no, last_name, first_name, middle_name, birth_date, employment_type, status_id)
+           VALUES ($1, $2, $3, $4, '1990-01-01', 'REGULAR', $5)
            RETURNING id`,
           [tempEmpNo, lastName, firstName, middleName, activeStatusId],
         )
@@ -295,35 +288,23 @@ export const usersService = {
 
         const { officeId, costCenterId } = await ensureOfficeAndCostCenter(client, office, costCenter)
         const fundId = Number((await client.query(`SELECT id FROM funds ORDER BY id ASC LIMIT 1`)).rows[0].id)
-        const empTypeId = Number(
-          (await client.query(`SELECT id FROM employment_types ORDER BY id ASC LIMIT 1`)).rows[0].id,
-        )
 
         await client.query(
           `INSERT INTO appointments (
-             employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+             employee_id, office_id, cost_center_id, fund_id, employment_type,
              position_title, monthly_rate, effective_from
-           ) VALUES ($1, $2, $3, $4, $5, $6, 25000.00, CURRENT_DATE)`,
-          [parsedEmployeeId, officeId, costCenterId, fundId, empTypeId, primaryRole],
+           ) VALUES ($1, $2, $3, $4, 'REGULAR', $5, 25000.00, CURRENT_DATE)`,
+          [parsedEmployeeId, officeId, costCenterId, fundId, primaryRole],
         )
       }
 
       const userIns = await client.query(
-        `INSERT INTO users (employee_id, username, password_hash, email, is_active)
-         VALUES ($1, $2, $3, $4, TRUE)
+        `INSERT INTO users (employee_id, role, username, password_hash, email, is_active)
+         VALUES ($1, $2, $3, $4, $5, TRUE)
          RETURNING id`,
-        [parsedEmployeeId, username, hashedPassword, rawEmail],
+        [parsedEmployeeId, primaryRole, username, hashedPassword, rawEmail],
       )
       const userId = Number(userIns.rows[0].id)
-
-      for (const roleName of finalRoles) {
-        await client.query(
-          `INSERT INTO user_roles (user_id, role_id)
-           SELECT $1, id FROM roles WHERE name = $2 LIMIT 1
-           ON CONFLICT DO NOTHING`,
-          [userId, roleName],
-        )
-      }
 
       await client.query(
         `INSERT INTO audit_logs (user_id, action, entity_type, entity_id, new_values, ip_address, created_at)
@@ -467,15 +448,7 @@ export const usersService = {
           ;(err as any).statusCode = 400
           throw err
         }
-        await client.query(`DELETE FROM user_roles WHERE user_id = $1`, [id])
-        for (const roleName of validatedRoles) {
-          await client.query(
-            `INSERT INTO user_roles (user_id, role_id)
-             SELECT $1, id FROM roles WHERE name = $2 LIMIT 1
-             ON CONFLICT DO NOTHING`,
-            [id, roleName],
-          )
-        }
+        await client.query(`UPDATE users SET role = $1 WHERE id = $2`, [validatedRoles[0], id])
       }
 
       await auditService.logAction(

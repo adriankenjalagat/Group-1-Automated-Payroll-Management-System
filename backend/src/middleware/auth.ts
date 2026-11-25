@@ -108,10 +108,11 @@ export async function authenticate(
       return
     }
 
-    // Always recheck current user account status and permissions against PostgreSQL (43-table schema)
+    // Always recheck current user account status and permissions against PostgreSQL
     const userRes = await pool.query(
       `SELECT u.id,
               u.employee_id,
+              u.role,
               u.username,
               u.email,
               u.is_active,
@@ -121,10 +122,7 @@ export async function authenticate(
               ) AS full_name,
               COALESCE(o.name, 'University Office') AS office,
               COALESCE(cc.name, o.name, 'University Office') AS cost_center,
-              COALESCE(
-                ARRAY_AGG(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL),
-                ARRAY['Employee']::text[]
-              ) AS roles
+              ARRAY[COALESCE(u.role, 'Employee')]::text[] AS roles
        FROM users u
        LEFT JOIN employees e ON e.id = u.employee_id
        LEFT JOIN LATERAL (
@@ -136,12 +134,8 @@ export async function authenticate(
        ) a ON TRUE
        LEFT JOIN offices o ON o.id = a.office_id
        LEFT JOIN cost_centers cc ON cc.id = a.cost_center_id
-       LEFT JOIN user_roles ur ON ur.user_id = u.id
-       LEFT JOIN roles r ON r.id = ur.role_id
        WHERE u.id::text = $1
           OR LOWER(u.username) = LOWER($2)
-       GROUP BY u.id, u.employee_id, u.username, u.email, u.is_active,
-                e.first_name, e.middle_name, e.last_name, o.name, cc.name
        LIMIT 1`,
       [tokenSubject || '', tokenUsername || ''],
     )

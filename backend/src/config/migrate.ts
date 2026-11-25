@@ -211,19 +211,250 @@ export async function runMigrations(): Promise<void> {
       `)
     }
 
-    // 3. Apply the 43-table normalized PostgreSQL schema directly in `public`
-    console.log('[Migration] Applying 43-table normalized schema.sql...')
+    // 2b. If upgrading an existing 43-table DB that still has `employment_types`, merge it cleanly into `employees` BEFORE applying schema.sql
+    const hasEmpTypesTable = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'employment_types'
+      LIMIT 1
+    `)
+    if (hasEmpTypesTable.rows.length > 0) {
+      console.log('[Migration] Merging separate employment_types table into employees.employment_type...')
+      await client.query(`
+        ALTER TABLE employees ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) NOT NULL DEFAULT 'REGULAR';
+        ALTER TABLE appointments ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) NOT NULL DEFAULT 'REGULAR';
+        ALTER TABLE payroll_batches ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) NOT NULL DEFAULT 'REGULAR';
+        ALTER TABLE historical_uploads ADD COLUMN IF NOT EXISTS employment_type VARCHAR(50) NULL;
+
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'appointments' AND column_name = 'employment_type_id') THEN
+            UPDATE appointments a
+            SET employment_type = et.code
+            FROM employment_types et
+            WHERE a.employment_type_id = et.id;
+
+            UPDATE employees e
+            SET employment_type = sub.employment_type
+            FROM (
+              SELECT DISTINCT ON (employee_id) employee_id, employment_type
+              FROM appointments
+              ORDER BY employee_id, effective_from DESC, id DESC
+            ) sub
+            WHERE e.id = sub.employee_id;
+
+            ALTER TABLE appointments DROP COLUMN IF EXISTS employment_type_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'payroll_batches' AND column_name = 'employment_type_id') THEN
+            UPDATE payroll_batches pb
+            SET employment_type = et.code
+            FROM employment_types et
+            WHERE pb.employment_type_id = et.id;
+
+            ALTER TABLE payroll_batches DROP COLUMN IF EXISTS employment_type_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'historical_uploads' AND column_name = 'employment_type_id') THEN
+            UPDATE historical_uploads hu
+            SET employment_type = et.code
+            FROM employment_types et
+            WHERE hu.employment_type_id = et.id;
+
+            ALTER TABLE historical_uploads DROP COLUMN IF EXISTS employment_type_id CASCADE;
+          END IF;
+        END $$;
+
+        DROP TABLE IF EXISTS employment_types CASCADE;
+      `)
+    }
+
+    // 2c. If upgrading an existing DB that still has `roles` or `user_roles`, convert to `role VARCHAR(100)` directly on `users` & `workflow_steps` BEFORE applying schema.sql
+    const hasRolesTable = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name IN ('roles', 'user_roles')
+      LIMIT 1
+    `)
+    if (hasRolesTable.rows.length > 0) {
+      console.log('[Migration] Converting users.role_id & workflow_steps.role_id to VARCHAR role and dropping roles/user_roles...')
+      await client.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(100) NOT NULL DEFAULT 'Employee';
+        ALTER TABLE workflow_steps ADD COLUMN IF NOT EXISTS role VARCHAR(100) NOT NULL DEFAULT 'Employee';
+
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'roles') THEN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'role_id') THEN
+              UPDATE users u
+              SET role = r.name
+              FROM roles r
+              WHERE u.role_id = r.id;
+            ELSIF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_roles') THEN
+              UPDATE users u
+              SET role = sub.role_name
+              FROM (
+                SELECT DISTINCT ON (ur.user_id) ur.user_id, r.name AS role_name
+                FROM user_roles ur
+                JOIN roles r ON r.id = ur.role_id
+                ORDER BY ur.user_id, ur.role_id ASC
+              ) sub
+              WHERE u.id = sub.user_id;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'workflow_steps' AND column_name = 'role_id') THEN
+              UPDATE workflow_steps ws
+              SET role = r.name
+              FROM roles r
+              WHERE ws.role_id = r.id;
+            END IF;
+          END IF;
+        END $$;
+
+        ALTER TABLE users DROP COLUMN IF EXISTS role_id CASCADE;
+        ALTER TABLE workflow_steps DROP COLUMN IF EXISTS role_id CASCADE;
+        DROP TABLE IF EXISTS user_roles CASCADE;
+        DROP TABLE IF EXISTS roles CASCADE;
+      `)
+    }
+
+    // 2d. If upgrading an existing DB that still has split payroll_batches/items/lines/registers, merge into single `payrolls` table
+    const hasSplitPayroll = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name IN ('payroll_batches', 'payroll_items', 'payroll_item_lines', 'payroll_registers')
+      LIMIT 1
+    `)
+    if (hasSplitPayroll.rows.length > 0) {
+      console.log('[Migration] Merging payroll_batches, payroll_items, payroll_item_lines, and payroll_registers into payrolls...')
+      await client.query(`
+        DROP TABLE IF EXISTS
+          payroll_item_lines,
+          payroll_registers,
+          payslips,
+          bank_upload_files,
+          ada_forms,
+          journal_entry_lines,
+          journal_entries,
+          disbursement_vouchers,
+          obligation_slips,
+          payroll_items,
+          payroll_batches
+        CASCADE;
+      `)
+    }
+
+    // 2e. If upgrading an existing DB that still has split workflow_templates/workflow_steps, merge into `workflows`
+    const hasSplitWorkflow = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name IN ('workflow_templates', 'workflow_steps')
+      LIMIT 1
+    `)
+    if (hasSplitWorkflow.rows.length > 0) {
+      console.log('[Migration] Merging workflow_templates and workflow_steps into single workflows table...')
+      await client.query(`
+        DROP TABLE IF EXISTS
+          approval_actions,
+          approval_requests,
+          workflow_steps,
+          workflow_templates
+        CASCADE;
+      `)
+    }
+
+    // 2f. If upgrading an existing DB that still has split document tables, merge into single `documents` table
+    const hasSplitDocuments = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('document_types', 'document_type_employment_types', 'document_submissions', 'submission_items')
+      LIMIT 1
+    `)
+    if (hasSplitDocuments.rows.length > 0) {
+      console.log('[Migration] Merging document_types, document_type_employment_types, document_submissions, and submission_items into documents...')
+      await client.query(`
+        DROP TABLE IF EXISTS
+          transmittal_items,
+          logbook_verifications,
+          submission_items,
+          document_submissions,
+          document_type_employment_types,
+          document_types
+        CASCADE;
+      `)
+    }
+
+    // 2g. If upgrading an existing DB that still has `payroll_periods`, merge period fields directly into `payrolls` (and period_label into referencing tables)
+    const hasPayrollPeriods = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'payroll_periods'
+      LIMIT 1
+    `)
+    if (hasPayrollPeriods.rows.length > 0) {
+      console.log('[Migration] Merging payroll_periods into payrolls and switching period_id FKs to period_label...')
+      await client.query(`
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'payrolls' AND column_name = 'period_id') THEN
+            ALTER TABLE payrolls ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NOT NULL DEFAULT 'November 2026';
+            ALTER TABLE payrolls ADD COLUMN IF NOT EXISTS period_start DATE NULL;
+            ALTER TABLE payrolls ADD COLUMN IF NOT EXISTS period_end DATE NULL;
+            ALTER TABLE payrolls ADD COLUMN IF NOT EXISTS submission_deadline DATE NULL;
+
+            UPDATE payrolls p
+            SET period_label = pp.label,
+                period_start = pp.period_start,
+                period_end = pp.period_end,
+                submission_deadline = pp.submission_deadline
+            FROM payroll_periods pp
+            WHERE p.period_id = pp.id;
+
+            ALTER TABLE payrolls DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'employee_components' AND column_name = 'period_id') THEN
+            ALTER TABLE employee_components ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NULL;
+            UPDATE employee_components ec
+            SET period_label = pp.label
+            FROM payroll_periods pp
+            WHERE ec.period_id = pp.id;
+            ALTER TABLE employee_components DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'documents' AND column_name = 'period_id') THEN
+            ALTER TABLE documents ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NOT NULL DEFAULT 'November 2026';
+            UPDATE documents d
+            SET period_label = pp.label
+            FROM payroll_periods pp
+            WHERE d.period_id = pp.id;
+            ALTER TABLE documents DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'dtr_imports' AND column_name = 'period_id') THEN
+            ALTER TABLE dtr_imports ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NOT NULL DEFAULT 'November 2026';
+            UPDATE dtr_imports di
+            SET period_label = pp.label
+            FROM payroll_periods pp
+            WHERE di.period_id = pp.id;
+            ALTER TABLE dtr_imports DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'historical_uploads' AND column_name = 'period_id') THEN
+            ALTER TABLE historical_uploads ADD COLUMN IF NOT EXISTS period_label VARCHAR(100) NULL;
+            UPDATE historical_uploads hu
+            SET period_label = pp.label
+            FROM payroll_periods pp
+            WHERE hu.period_id = pp.id;
+            ALTER TABLE historical_uploads DROP COLUMN IF EXISTS period_id CASCADE;
+          END IF;
+        END $$;
+
+        DROP TABLE IF EXISTS payroll_periods CASCADE;
+      `)
+    }
+
+    // 3. Apply the 32-table normalized PostgreSQL schema directly in `public`
+    console.log('[Migration] Applying 32-table normalized schema.sql (payroll_periods merged into payrolls)...')
     await client.query(readSqlFile('schema.sql'))
 
     // 4. Seed required lookup & reference data (idempotent)
     await client.query(`
-      INSERT INTO employment_types (code, name) VALUES
-        ('REGULAR', 'Regular / Permanent'),
-        ('CONTRACTUAL', 'Contractual'),
-        ('JO', 'Job Order'),
-        ('LECTURER', 'Part-Time / Visiting Lecturer')
-      ON CONFLICT (code) DO NOTHING;
-
       INSERT INTO slip_types (code, name) VALUES
         ('ORAS', 'Obligation Request and Status'),
         ('BURAS', 'Budget Utilization Request and Status')
@@ -240,19 +471,6 @@ export async function runMigrations(): Promise<void> {
       INSERT INTO funds (code, name, slip_type_id)
       SELECT 'F07', 'Fund 07 - Trust / Special Purpose Fund', id FROM slip_types WHERE code = 'BURAS'
       ON CONFLICT (code) DO NOTHING;
-
-      INSERT INTO roles (name, description) VALUES
-        ('System Administrator', 'Full system administration and user management'),
-        ('Employee', 'University employee self-service portal'),
-        ('Immediate Supervisor', 'Office/department document and attendance validation'),
-        ('HR Office', 'Employee appointments, records, and HR verification'),
-        ('Accounting', 'Payroll computation, review, and journal entries'),
-        ('Accountant', 'Disbursement voucher and accounting certification'),
-        ('Cost Center Signatory', 'Department/college cost center approval'),
-        ('Budget Office', 'Fund allocation, ORAS/BURAS obligation certification'),
-        ('Office of the Chancellor', 'Executive final approval for disbursement'),
-        ('Cashier', 'ADA/ADCA preparation, LandBank upload, and disbursement')
-      ON CONFLICT (name) DO NOTHING;
 
       INSERT INTO statuses (category, code, name) VALUES
         ('EMPLOYEE', 'ACTIVE', 'Active'),
@@ -324,34 +542,9 @@ export async function runMigrations(): Promise<void> {
       ON CONFLICT (code) DO NOTHING;
     `)
 
-    // Default document type & payroll period if empty
-    const docTypeCount = await client.query('SELECT COUNT(*)::int AS cnt FROM document_types')
-    if (docTypeCount.rows[0].cnt === 0) {
-      await client.query(`
-        INSERT INTO document_types (name, is_required) VALUES
-          ('Daily Time Record (DTR)', TRUE),
-          ('Accomplishment Report', TRUE),
-          ('Appointment / Contract', FALSE),
-          ('Supporting Document', FALSE);
-      `)
-    }
-
-    const periodCount = await client.query('SELECT COUNT(*)::int AS cnt FROM payroll_periods')
-    if (periodCount.rows[0].cnt === 0) {
-      await client.query(`
-        INSERT INTO payroll_periods (label, period_start, period_end, submission_deadline, status_id)
-        SELECT 'November 2026', '2026-11-01', '2026-11-30', '2026-11-25', id
-        FROM statuses WHERE category = 'PERIOD' AND code = 'OPEN' LIMIT 1;
-      `)
-    }
-
-    // Default approval workflow template & 5 baseline steps if empty
-    const wfCount = await client.query('SELECT COUNT(*)::int AS cnt FROM workflow_templates')
+    // Default approval workflow (5 baseline steps) if empty
+    const wfCount = await client.query('SELECT COUNT(*)::int AS cnt FROM workflows')
     if (wfCount.rows[0].cnt === 0) {
-      const wfRes = await client.query(
-        `INSERT INTO workflow_templates (name, document_type) VALUES ('Default Payroll Approval Route', 'PAYROLL') RETURNING id`,
-      )
-      const wfId = wfRes.rows[0].id
       const stages: Array<[number, string, string, boolean]> = [
         [1, 'Cost Center Signatory', 'Cost Center Signatory', true],
         [2, 'HR Office', 'HR Office', false],
@@ -361,10 +554,10 @@ export async function runMigrations(): Promise<void> {
       ]
       for (const [order, stageName, roleName, useCc] of stages) {
         await client.query(
-          `INSERT INTO workflow_steps (template_id, step_order, role_id, use_cost_center_signatory, step_name)
-           SELECT $1, $2, id, $3, $4 FROM roles WHERE name = $5 LIMIT 1
-           ON CONFLICT (template_id, step_order) DO NOTHING`,
-          [wfId, order, useCc, stageName, roleName],
+          `INSERT INTO workflows (name, document_type, step_order, role, use_cost_center_signatory, step_name)
+           VALUES ('Default Payroll Approval Route', 'PAYROLL', $1, $2, $3, $4)
+           ON CONFLICT (document_type, step_order) DO NOTHING`,
+          [order, roleName, useCc, stageName],
         )
       }
     }
@@ -378,9 +571,6 @@ export async function runMigrations(): Promise<void> {
         await client.query(`SELECT id FROM statuses WHERE category = 'EMPLOYEE' AND code = 'ACTIVE' LIMIT 1`)
       ).rows[0].id
       const defaultFundId = (await client.query(`SELECT id FROM funds WHERE code = 'F01' LIMIT 1`)).rows[0].id
-      const regularTypeId = (
-        await client.query(`SELECT id FROM employment_types WHERE code = 'REGULAR' LIMIT 1`)
-      ).rows[0].id
 
       for (let i = 0; i < DEFAULT_SEED_USERS.length; i++) {
         const u = DEFAULT_SEED_USERS[i]
@@ -389,10 +579,10 @@ export async function runMigrations(): Promise<void> {
 
         const empRes = await client.query(
           `INSERT INTO employees (
-             employee_no, last_name, first_name, middle_name, birth_date, status_id
-           ) VALUES ($1, $2, $3, NULL, '1990-01-01', $4)
+             employee_no, last_name, first_name, middle_name, birth_date, employment_type, status_id
+           ) VALUES ($1, $2, $3, NULL, '1990-01-01', $4, $5)
            RETURNING id`,
-          [empNo, u.lastName, u.firstName, activeEmpStatusId],
+          [empNo, u.lastName, u.firstName, u.empTypeCode || 'REGULAR', activeEmpStatusId],
         )
         const empId = empRes.rows[0].id
 
@@ -411,36 +601,27 @@ export async function runMigrations(): Promise<void> {
         if (officeId && ccId) {
           await client.query(
             `INSERT INTO appointments (
-               employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+               employee_id, office_id, cost_center_id, fund_id, employment_type,
                position_title, monthly_rate, effective_from
              ) VALUES ($1, $2, $3, $4, $5, $6, 25000.00, '2026-01-01')`,
-            [empId, officeId, ccId, defaultFundId, regularTypeId, u.position],
+            [empId, officeId, ccId, defaultFundId, u.empTypeCode || 'REGULAR', u.position],
           )
         }
 
-        const userRes = await client.query(
-          `INSERT INTO users (employee_id, username, password_hash, email, is_active)
-           VALUES ($1, $2, $3, $4, TRUE)
-           RETURNING id`,
-          [empId, u.username, hashedPw, u.email],
+        const primaryRoleName = u.roles[0] || 'Employee'
+
+        await client.query(
+          `INSERT INTO users (employee_id, role, username, password_hash, email, is_active)
+           VALUES ($1, $2, $3, $4, $5, TRUE)`,
+          [empId, primaryRoleName, u.username, hashedPw, u.email],
         )
-        const userId = userRes.rows[0].id
-
-        for (const roleName of u.roles) {
-          await client.query(
-            `INSERT INTO user_roles (user_id, role_id)
-             SELECT $1, id FROM roles WHERE name = $2 LIMIT 1
-             ON CONFLICT DO NOTHING`,
-            [userId, roleName],
-          )
-        }
       }
 
       console.log(`[Migration] Seeded ${DEFAULT_SEED_USERS.length} baseline accounts successfully.`)
     }
 
     await client.query('COMMIT')
-    console.log('[Migration] All 43-table schema migrations and checks completed successfully.')
+    console.log('[Migration] All 32-table schema migrations and checks completed successfully.')
   } catch (error) {
     await client.query('ROLLBACK')
     console.error('[Migration] Migration failed:', error)

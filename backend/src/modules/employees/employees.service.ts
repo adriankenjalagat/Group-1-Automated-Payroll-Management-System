@@ -75,6 +75,7 @@ const EMPLOYEE_SELECT_SQL = `
     e.employee_no,
     TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
     e.birth_date,
+    e.employment_type,
     e.bank_account_no,
     e.tin,
     e.gsis_no,
@@ -90,8 +91,7 @@ const EMPLOYEE_SELECT_SQL = `
     a.effective_from,
     a.effective_to,
     o.name AS office_name,
-    et.name AS employment_type_name,
-    et.code AS employment_type_code,
+    COALESCE(a.employment_type, e.employment_type, 'REGULAR') AS employment_type_code,
     f.code AS fund_code,
     COALESCE(
       NULLIF(TRIM(CONCAT_WS(' ', he.first_name, he.last_name)), ''),
@@ -111,7 +111,6 @@ const EMPLOYEE_SELECT_SQL = `
   LEFT JOIN offices o ON o.id = a.office_id
   LEFT JOIN users hu ON hu.id = o.head_user_id
   LEFT JOIN employees he ON he.id = hu.employee_id
-  LEFT JOIN employment_types et ON et.id = a.employment_type_id
   LEFT JOIN funds f ON f.id = a.fund_id
 `
 
@@ -151,7 +150,9 @@ function mapEmployee(row: any, options?: { unmaskBank?: boolean }): HrEmployee {
         ? 'Contractual'
         : empTypeCode === 'JO'
           ? 'Job Order'
-          : row.employment_type_name || 'Permanent'
+          : empTypeCode === 'LECTURER'
+            ? 'Lecturer'
+            : 'Permanent'
 
   return {
     id: Number(row.id),
@@ -224,19 +225,15 @@ async function resolveLookups(client: any, data: Partial<HrEmployee>) {
   )
 
   const empTypeStr = (data.employmentType || 'Permanent').toLowerCase()
-  const empTypeCode = empTypeStr.includes('contract')
+  const employmentType = empTypeStr.includes('contract')
     ? 'CONTRACTUAL'
     : empTypeStr.includes('job') || empTypeStr === 'jo'
       ? 'JO'
       : empTypeStr.includes('lect')
         ? 'LECTURER'
         : 'REGULAR'
-  const etRes = await client.query(`SELECT id FROM employment_types WHERE code = $1 LIMIT 1`, [empTypeCode])
-  const employmentTypeId = Number(
-    etRes.rows[0]?.id || (await client.query(`SELECT id FROM employment_types ORDER BY id ASC LIMIT 1`)).rows[0].id,
-  )
 
-  return { statusId, officeId, costCenterId, fundId, employmentTypeId }
+  return { statusId, officeId, costCenterId, fundId, employmentType }
 }
 
 export const employeesService = {
@@ -297,19 +294,20 @@ export const employeesService = {
     try {
       await client.query('BEGIN')
 
-      const { statusId, officeId, costCenterId, fundId, employmentTypeId } = await resolveLookups(client, data)
+      const { statusId, officeId, costCenterId, fundId, employmentType } = await resolveLookups(client, data)
 
       const empRes = await client.query(
         `INSERT INTO employees (
            employee_no, last_name, first_name, middle_name, birth_date,
-           bank_account_no, status_id
-         ) VALUES ($1, $2, $3, $4, '1990-01-01', $5, $6)
+           employment_type, bank_account_no, status_id
+         ) VALUES ($1, $2, $3, $4, '1990-01-01', $5, $6, $7)
          RETURNING id`,
         [
           employeeNo,
           lastName,
           firstName,
           middleName,
+          employmentType,
           data.bankAccountNumber ? data.bankAccountNumber.trim() : null,
           statusId,
         ],
@@ -325,7 +323,7 @@ export const employeesService = {
 
       await client.query(
         `INSERT INTO appointments (
-           employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+           employee_id, office_id, cost_center_id, fund_id, employment_type,
            position_title, monthly_rate, daily_rate, hourly_rate, effective_from, effective_to
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11::date)`,
         [
@@ -333,7 +331,7 @@ export const employeesService = {
           officeId,
           costCenterId,
           fundId,
-          employmentTypeId,
+          employmentType,
           position,
           monthlyRate,
           dailyRate,
@@ -402,6 +400,11 @@ export const employeesService = {
         empValues.push(lookups.statusId)
       }
 
+      if (data.employmentType !== undefined) {
+        empUpdates.push(`employment_type = $${pIdx++}`)
+        empValues.push(lookups.employmentType)
+      }
+
       if (empUpdates.length > 0) {
         empValues.push(existing.id)
         await client.query(
@@ -431,7 +434,7 @@ export const employeesService = {
            SET office_id = $1,
                cost_center_id = $2,
                fund_id = $3,
-               employment_type_id = $4,
+               employment_type = $4,
                position_title = $5,
                monthly_rate = $6,
                daily_rate = $7,
@@ -443,7 +446,7 @@ export const employeesService = {
             lookups.officeId,
             lookups.costCenterId,
             lookups.fundId,
-            lookups.employmentTypeId,
+            lookups.employmentType,
             position,
             monthlyRate,
             dailyRate,
@@ -456,7 +459,7 @@ export const employeesService = {
       } else {
         await client.query(
           `INSERT INTO appointments (
-             employee_id, office_id, cost_center_id, fund_id, employment_type_id,
+             employee_id, office_id, cost_center_id, fund_id, employment_type,
              position_title, monthly_rate, daily_rate, hourly_rate, effective_from, effective_to
            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11::date)`,
           [
@@ -464,7 +467,7 @@ export const employeesService = {
             lookups.officeId,
             lookups.costCenterId,
             lookups.fundId,
-            lookups.employmentTypeId,
+            lookups.employmentType,
             position,
             monthlyRate,
             dailyRate,
