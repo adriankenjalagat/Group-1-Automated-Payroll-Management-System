@@ -95,9 +95,9 @@ export const approvalsService = {
       JOIN workflow_steps ws ON ws.id = aa.step_id
       LEFT JOIN users u ON u.id = aa.acted_by
       LEFT JOIN employees e ON e.id = u.employee_id
-      LEFT JOIN payroll_batches pb ON pb.id = ar.entity_id AND ar.entity_type = 'PAYROLL_BATCH'
-      LEFT JOIN cost_centers cc ON cc.id = pb.cost_center_id
-      WHERE ar.entity_type = 'PAYROLL_BATCH'
+      LEFT JOIN payrolls p ON p.id = ar.entity_id AND ar.entity_type = 'PAYROLL'
+      LEFT JOIN cost_centers cc ON cc.id = p.cost_center_id
+      WHERE ar.entity_type = 'PAYROLL'
     `
     const params: any[] = []
     if (payrollId) {
@@ -199,21 +199,21 @@ export const approvalsService = {
   ): Promise<{ valid: boolean; route: ApprovalRouteRule[]; approvals: ApprovalStep[] }> {
     const q = clientOrPool || pool
 
-    const bRes = await q.query(
-      `SELECT pb.id, st.code AS status_code
-       FROM payroll_batches pb
-       JOIN statuses st ON st.id = pb.status_id
-       WHERE pb.id = $1`,
+    const pRes = await q.query(
+      `SELECT p.id, st.code AS status_code
+       FROM payrolls p
+       JOIN statuses st ON st.id = p.status_id
+       WHERE p.id = $1`,
       [payrollId],
     )
-    if (bRes.rows.length === 0) {
+    if (pRes.rows.length === 0) {
       const err = new Error(`Payroll record #${payrollId} not found.`)
       ;(err as any).statusCode = 404
       throw err
     }
-    const batch = bRes.rows[0]
-    if (batch.status_code === 'REJECTED' || batch.status_code === 'RETURNED') {
-      const err = new Error(`Cannot lock payroll #${payrollId}: status is ${batch.status_code}.`)
+    const payrollRow = pRes.rows[0]
+    if (payrollRow.status_code === 'REJECTED' || payrollRow.status_code === 'RETURNED') {
+      const err = new Error(`Cannot lock payroll #${payrollId}: status is ${payrollRow.status_code}.`)
       ;(err as any).statusCode = 400
       throw err
     }
@@ -263,20 +263,20 @@ export const approvalsService = {
       throw err
     }
 
-    const batchRes = await pool.query(
-      `SELECT pb.*, cc.name AS cost_center_name, st.code AS status_code
-       FROM payroll_batches pb
-       JOIN cost_centers cc ON cc.id = pb.cost_center_id
-       JOIN statuses st ON st.id = pb.status_id
-       WHERE pb.id = $1`,
+    const payrollRes = await pool.query(
+      `SELECT p.*, cc.name AS cost_center_name, st.code AS status_code
+       FROM payrolls p
+       JOIN cost_centers cc ON cc.id = p.cost_center_id
+       JOIN statuses st ON st.id = p.status_id
+       WHERE p.id = $1`,
       [payrollId],
     )
-    if (batchRes.rows.length === 0) {
+    if (payrollRes.rows.length === 0) {
       const err = new Error(`Payroll record #${payrollId} not found.`)
       ;(err as any).statusCode = 404
       throw err
     }
-    const batch = batchRes.rows[0]
+    const payroll = payrollRes.rows[0]
 
     const route = await getApprovalRoute('*', '*', '*')
     if (route.length === 0) {
@@ -291,7 +291,7 @@ export const approvalsService = {
 
       // Ensure approval_request exists
       let reqRes = await client.query(
-        `SELECT * FROM approval_requests WHERE entity_type = 'PAYROLL_BATCH' AND entity_id = $1 ORDER BY id DESC LIMIT 1`,
+        `SELECT * FROM approval_requests WHERE entity_type = 'PAYROLL' AND entity_id = $1 ORDER BY id DESC LIMIT 1`,
         [payrollId],
       )
       let request = reqRes.rows[0]
@@ -304,7 +304,7 @@ export const approvalsService = {
         ).rows[0].id
         const insReq = await client.query(
           `INSERT INTO approval_requests (template_id, entity_type, entity_id, current_step, status_id, requested_by)
-           VALUES ($1, 'PAYROLL_BATCH', $2, 1, $3, $4)
+           VALUES ($1, 'PAYROLL', $2, 1, $3, $4)
            RETURNING *`,
           [wtId, payrollId, pendStatusId, actorUser.id],
         )
@@ -328,7 +328,7 @@ export const approvalsService = {
         actorUser.roles.some((r) => r === 'Cost Center Signatory' || r === 'Immediate Supervisor')
       ) {
         const actorCc = params.costCenter || actorUser.costCenter || actorUser.office
-        const payrollCc = batch.cost_center_name || ''
+        const payrollCc = payroll.cost_center_name || ''
         if (payrollCc && actorCc && actorCc.toLowerCase() !== payrollCc.toLowerCase()) {
           const err = new Error(
             `Forbidden: Cost center "${actorCc}" does not match payroll cost center "${payrollCc}".`,
@@ -360,7 +360,7 @@ export const approvalsService = {
           const urStatus = (
             await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'UNDER_REVIEW' LIMIT 1`)
           ).rows[0].id
-          await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [urStatus, payrollId])
+          await client.query(`UPDATE payrolls SET status_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [urStatus, payrollId])
         } else {
           nextStage = 'Completed'
           readyForDv = true
@@ -371,7 +371,7 @@ export const approvalsService = {
             await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'APPROVED' LIMIT 1`)
           ).rows[0].id
           await client.query(`UPDATE approval_requests SET status_id = $1 WHERE id = $2`, [appReqSt, request.id])
-          await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [appPaySt, payrollId])
+          await client.query(`UPDATE payrolls SET status_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [appPaySt, payrollId])
 
           // Create obligation slip if not yet created
           const schedDisbSt = (
@@ -379,10 +379,10 @@ export const approvalsService = {
           ).rows[0].id
           const slipNo = `OBL-${new Date().getFullYear()}-${String(payrollId).padStart(4, '0')}`
           await client.query(
-            `INSERT INTO obligation_slips (batch_id, slip_no, amount, status_id)
+            `INSERT INTO obligation_slips (payroll_id, slip_no, amount, status_id)
              VALUES ($1, $2, $3, $4)
              ON CONFLICT (slip_no) DO NOTHING`,
-            [payrollId, slipNo, batch.total_gross, schedDisbSt],
+            [payrollId, slipNo, payroll.gross_pay, schedDisbSt],
           )
         }
       } else {
@@ -395,7 +395,7 @@ export const approvalsService = {
           await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = $1 LIMIT 1`, [reqStCode])
         ).rows[0].id
         await client.query(`UPDATE approval_requests SET status_id = $1 WHERE id = $2`, [appSt, request.id])
-        await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [paySt, payrollId])
+        await client.query(`UPDATE payrolls SET status_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [paySt, payrollId])
       }
 
       await auditService.logAction(
@@ -403,7 +403,7 @@ export const approvalsService = {
         `${decision} payroll #${payrollId} at stage "${currentRouteStage.stageName}"`,
         { payrollId, stage: currentRouteStage.stageName, decision, remarks, nextStage, readyForDv },
         ip || null,
-        'PAYROLL_BATCH',
+        'PAYROLL',
         payrollId,
       )
 

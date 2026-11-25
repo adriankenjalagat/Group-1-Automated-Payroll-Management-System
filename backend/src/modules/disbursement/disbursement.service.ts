@@ -110,37 +110,35 @@ export interface DisbursementRecord {
   createdAt: string
 }
 
-const BATCH_DETAIL_SQL = `
-  SELECT pb.*,
+const PAYROLL_DETAIL_SQL = `
+  SELECT p.*,
+         p.gross_pay AS total_gross,
+         p.net_pay AS total_net,
          pp.label AS period_label,
          o.name AS office_name,
          f.code AS fund_code,
          st_slip.code AS slip_type_code,
-         pb.employment_type AS emp_type_name,
+         p.employment_type AS emp_type_name,
          st.code AS status_code,
-         pi.id AS payroll_item_id,
          e.id AS employee_id,
          e.employee_no,
          TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS employee_name,
          e.bank_account_no
-  FROM payroll_batches pb
-  JOIN payroll_periods pp ON pp.id = pb.period_id
-  JOIN offices o ON o.id = pb.office_id
-  JOIN funds f ON f.id = pb.fund_id
+  FROM payrolls p
+  JOIN payroll_periods pp ON pp.id = p.period_id
+  JOIN offices o ON o.id = p.office_id
+  JOIN funds f ON f.id = p.fund_id
   JOIN slip_types st_slip ON st_slip.id = f.slip_type_id
-  JOIN statuses st ON st.id = pb.status_id
-  LEFT JOIN LATERAL (
-    SELECT * FROM payroll_items WHERE batch_id = pb.id ORDER BY id ASC LIMIT 1
-  ) pi ON TRUE
-  LEFT JOIN appointments a ON a.id = pi.appointment_id
-  LEFT JOIN employees e ON e.id = a.employee_id
+  JOIN statuses st ON st.id = p.status_id
+  JOIN appointments a ON a.id = p.appointment_id
+  JOIN employees e ON e.id = a.employee_id
 `
 
 export const disbursementService = {
   async findAll(): Promise<DisbursementRecord[]> {
     const res = await pool.query(
       `SELECT os.id,
-              os.batch_id AS payroll_id,
+              os.payroll_id,
               os.slip_no AS budget_document_number,
               os.amount AS total_amount,
               dv.dv_no AS dv_number,
@@ -152,14 +150,14 @@ export const disbursementService = {
               buf.file_name AS bank_upload_filename,
               af.generated_at AS released_at
        FROM obligation_slips os
-       JOIN payroll_batches pb ON pb.id = os.batch_id
-       JOIN funds f ON f.id = pb.fund_id
+       JOIN payrolls p ON p.id = os.payroll_id
+       JOIN funds f ON f.id = p.fund_id
        JOIN slip_types slt ON slt.id = f.slip_type_id
        JOIN statuses st_os ON st_os.id = os.status_id
        LEFT JOIN disbursement_vouchers dv ON dv.obligation_slip_id = os.id
        LEFT JOIN statuses st_dv ON st_dv.id = dv.status_id
        LEFT JOIN LATERAL (
-         SELECT * FROM ada_forms WHERE batch_id = os.batch_id ORDER BY id DESC LIMIT 1
+         SELECT * FROM ada_forms WHERE payroll_id = os.payroll_id ORDER BY id DESC LIMIT 1
        ) af ON TRUE
        LEFT JOIN bank_upload_files buf ON buf.ada_id = af.id
        ORDER BY os.id DESC`,
@@ -187,7 +185,7 @@ export const disbursementService = {
   },
 
   async generateBudgetDocument(payrollId: number): Promise<any> {
-    const res = await pool.query(`${BATCH_DETAIL_SQL} WHERE pb.id = $1`, [payrollId])
+    const res = await pool.query(`${PAYROLL_DETAIL_SQL} WHERE p.id = $1`, [payrollId])
     if (res.rows.length === 0) throw new Error(`Payroll record #${payrollId} not found.`)
     const b = res.rows[0]
     const docType = b.slip_type_code === 'BURAS' ? 'BURAS' : 'ORAS'
@@ -252,7 +250,7 @@ export const disbursementService = {
   },
 
   async generateDisbursementVoucher(payrollId: number): Promise<DisbursementVoucher> {
-    const res = await pool.query(`${BATCH_DETAIL_SQL} WHERE pb.id = $1`, [payrollId])
+    const res = await pool.query(`${PAYROLL_DETAIL_SQL} WHERE p.id = $1`, [payrollId])
     if (res.rows.length === 0) throw new Error(`Payroll record #${payrollId} not found.`)
     const b = res.rows[0]
     const budgetDoc = await disbursementService.generateBudgetDocument(payrollId)
@@ -291,7 +289,7 @@ export const disbursementService = {
     actingUserId?: number | null,
     ip?: string | null,
   ): Promise<LandBankExport> {
-    const res = await pool.query(`${BATCH_DETAIL_SQL} WHERE pb.id = $1`, [payrollId])
+    const res = await pool.query(`${PAYROLL_DETAIL_SQL} WHERE p.id = $1`, [payrollId])
     if (res.rows.length === 0) throw new Error(`Payroll record #${payrollId} not found.`)
     const b = res.rows[0]
     const filename = `LB_PAYROLL_${new Date().getFullYear()}_${String(payrollId).padStart(4, '0')}.txt`
@@ -371,7 +369,7 @@ export const disbursementService = {
     actingUserId?: number | null,
     ip?: string | null,
   ): Promise<DisbursementRecord> {
-    const res = await pool.query(`${BATCH_DETAIL_SQL} WHERE pb.id = $1`, [payrollId])
+    const res = await pool.query(`${PAYROLL_DETAIL_SQL} WHERE p.id = $1`, [payrollId])
     if (res.rows.length === 0) throw new Error(`Payroll record #${payrollId} not found.`)
     const b = res.rows[0]
 
@@ -399,7 +397,7 @@ export const disbursementService = {
 
       // 1. Upsert obligation_slip
       const osRes = await client.query(
-        `INSERT INTO obligation_slips (batch_id, slip_no, amount, status_id)
+        `INSERT INTO obligation_slips (payroll_id, slip_no, amount, status_id)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (slip_no) DO UPDATE SET status_id = EXCLUDED.status_id
          RETURNING id`,
@@ -437,7 +435,7 @@ export const disbursementService = {
 
       // 4. Upsert ada_form & bank_upload_file
       const adaRes = await client.query(
-        `INSERT INTO ada_forms (batch_id, form_type, ada_no, total_amount, file_path, status_id)
+        `INSERT INTO ada_forms (payroll_id, form_type, ada_no, total_amount, file_path, status_id)
          VALUES ($1, 'ADA', $2, $3, $4, $5)
          ON CONFLICT (ada_no) DO UPDATE SET status_id = EXCLUDED.status_id
          RETURNING id`,
@@ -451,14 +449,14 @@ export const disbursementService = {
         [adaId, lbFile, b.total_net],
       )
 
-      // 5. Update payroll_batch status to DISBURSED
-      await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [disbPaySt, payrollId])
+      // 5. Update payroll status to DISBURSED
+      await client.query(`UPDATE payrolls SET status_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [disbPaySt, payrollId])
 
-      // 6. Publish payslips for all items in this batch
+      // 6. Publish payslip for this payroll
       await client.query(
-        `INSERT INTO payslips (payroll_item_id, published_at)
-         SELECT id, CURRENT_TIMESTAMP FROM payroll_items WHERE batch_id = $1
-         ON CONFLICT (payroll_item_id) DO NOTHING`,
+        `INSERT INTO payslips (payroll_id, published_at)
+         VALUES ($1, CURRENT_TIMESTAMP)
+         ON CONFLICT (payroll_id) DO NOTHING`,
         [payrollId],
       )
 

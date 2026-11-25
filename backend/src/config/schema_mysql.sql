@@ -473,78 +473,60 @@ CREATE TABLE `leave_records` (
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE `payroll_batches` (
-  `id`               BIGINT NOT NULL AUTO_INCREMENT,
-  `period_id`        BIGINT         NOT NULL,
-  `office_id`        BIGINT         NOT NULL,
-  `cost_center_id`   BIGINT         NOT NULL,
-  `fund_id`          BIGINT         NOT NULL,
-  `employment_type`  ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NOT NULL DEFAULT 'REGULAR' COMMENT 'grouped by payroll type',
-  `batch_no`         VARCHAR(100)   NOT NULL,
-  `total_gross`      DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
-  `total_deductions` DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
-  `total_net`        DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
-  `status_id`        BIGINT         NOT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_payroll_batches_batch_no` (`batch_no`),
-  KEY `idx_payroll_batches_period_id` (`period_id`),
-  KEY `idx_payroll_batches_office_id` (`office_id`),
-  KEY `idx_payroll_batches_cost_center_id` (`cost_center_id`),
-  KEY `idx_payroll_batches_fund_id` (`fund_id`),
-  KEY `idx_payroll_batches_emp_type` (`employment_type`),
-  KEY `idx_payroll_batches_status_id` (`status_id`),
-  CONSTRAINT `fk_payroll_batches_period`
-    FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_payroll_batches_office`
-    FOREIGN KEY (`office_id`) REFERENCES `offices` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_payroll_batches_cost_center`
-    FOREIGN KEY (`cost_center_id`) REFERENCES `cost_centers` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_payroll_batches_fund`
-    FOREIGN KEY (`fund_id`) REFERENCES `funds` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_payroll_batches_status`
-    FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
-
-CREATE TABLE `payroll_items` (
+CREATE TABLE `payrolls` (
   `id`                       BIGINT NOT NULL AUTO_INCREMENT,
-  `batch_id`                 BIGINT         NOT NULL,
-  `appointment_id`           BIGINT         NOT NULL COMMENT 'employee via appointment',
+  `batch_no`                 VARCHAR(100)   NOT NULL,
+  `period_id`                BIGINT         NOT NULL,
+  `office_id`                BIGINT         NOT NULL,
+  `cost_center_id`           BIGINT         NOT NULL,
+  `fund_id`                  BIGINT         NOT NULL,
+  `appointment_id`           BIGINT         NOT NULL,
+  `employment_type`          ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NOT NULL DEFAULT 'REGULAR',
   `days_worked`              DECIMAL(6, 2)  NOT NULL DEFAULT 0.00,
   `absences`                 DECIMAL(6, 2)  NOT NULL DEFAULT 0.00,
   `late_undertime_deduction` DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
   `proration_factor`         DECIMAL(6, 4)  NOT NULL DEFAULT 1.0000,
-  `gross_pay`                DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
-  `total_deductions`         DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
-  `net_pay`                  DECIMAL(14, 2) NOT NULL DEFAULT 0.00 COMMENT 'snapshot',
+  `gross_pay`                DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  `total_deductions`         DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  `net_pay`                  DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
+  `breakdown`                JSON           NULL,
+  `register_no`              VARCHAR(100)   NULL,
+  `register_file_path`       VARCHAR(500)   NULL,
+  `register_generated_at`    DATETIME       NULL,
+  `register_generated_by`    BIGINT         NULL,
+  `status_id`                BIGINT         NOT NULL,
+  `created_at`               DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`               DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_payroll_items_batch_id` (`batch_id`),
-  KEY `idx_payroll_items_appointment_id` (`appointment_id`),
-  CONSTRAINT `fk_payroll_items_batch`
-    FOREIGN KEY (`batch_id`) REFERENCES `payroll_batches` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_payroll_items_appointment`
+  UNIQUE KEY `uq_payrolls_batch_no` (`batch_no`),
+  UNIQUE KEY `uq_payrolls_register_no` (`register_no`),
+  KEY `idx_payrolls_period_id` (`period_id`),
+  KEY `idx_payrolls_office_id` (`office_id`),
+  KEY `idx_payrolls_cost_center_id` (`cost_center_id`),
+  KEY `idx_payrolls_fund_id` (`fund_id`),
+  KEY `idx_payrolls_appointment_id` (`appointment_id`),
+  KEY `idx_payrolls_emp_type` (`employment_type`),
+  KEY `idx_payrolls_status_id` (`status_id`),
+  CONSTRAINT `fk_payrolls_period`
+    FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_payrolls_office`
+    FOREIGN KEY (`office_id`) REFERENCES `offices` (`id`)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_payrolls_cost_center`
+    FOREIGN KEY (`cost_center_id`) REFERENCES `cost_centers` (`id`)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_payrolls_fund`
+    FOREIGN KEY (`fund_id`) REFERENCES `funds` (`id`)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_payrolls_appointment`
     FOREIGN KEY (`appointment_id`) REFERENCES `appointments` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
-
-CREATE TABLE `payroll_item_lines` (
-  `id`              BIGINT NOT NULL AUTO_INCREMENT,
-  `payroll_item_id` BIGINT         NOT NULL,
-  `component_id`    BIGINT         NOT NULL,
-  `amount`          DECIMAL(14, 2) NOT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_payroll_item_lines_item_id` (`payroll_item_id`),
-  KEY `idx_payroll_item_lines_component_id` (`component_id`),
-  CONSTRAINT `fk_payroll_item_lines_item`
-    FOREIGN KEY (`payroll_item_id`) REFERENCES `payroll_items` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_payroll_item_lines_component`
-    FOREIGN KEY (`component_id`) REFERENCES `pay_components` (`id`)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_payrolls_register_generated_by`
+    FOREIGN KEY (`register_generated_by`) REFERENCES `users` (`id`)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT `fk_payrolls_status`
+    FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
@@ -622,17 +604,17 @@ CREATE TABLE `approval_actions` (
 ) ENGINE=InnoDB;
 
 CREATE TABLE `obligation_slips` (
-  `id`        BIGINT NOT NULL AUTO_INCREMENT,
-  `batch_id`  BIGINT         NOT NULL COMMENT 'fund and slip type via batch',
-  `slip_no`   VARCHAR(100)   NOT NULL,
-  `amount`    DECIMAL(14, 2) NOT NULL,
-  `status_id` BIGINT         NOT NULL,
+  `id`         BIGINT NOT NULL AUTO_INCREMENT,
+  `payroll_id` BIGINT         NOT NULL,
+  `slip_no`    VARCHAR(100)   NOT NULL,
+  `amount`     DECIMAL(14, 2) NOT NULL,
+  `status_id`  BIGINT         NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_obligation_slips_slip_no` (`slip_no`),
-  KEY `idx_obligation_slips_batch_id` (`batch_id`),
+  KEY `idx_obligation_slips_payroll_id` (`payroll_id`),
   KEY `idx_obligation_slips_status_id` (`status_id`),
-  CONSTRAINT `fk_obligation_slips_batch`
-    FOREIGN KEY (`batch_id`) REFERENCES `payroll_batches` (`id`)
+  CONSTRAINT `fk_obligation_slips_payroll`
+    FOREIGN KEY (`payroll_id`) REFERENCES `payrolls` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_obligation_slips_status`
     FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
@@ -641,7 +623,7 @@ CREATE TABLE `obligation_slips` (
 
 CREATE TABLE `disbursement_vouchers` (
   `id`                 BIGINT NOT NULL AUTO_INCREMENT,
-  `obligation_slip_id` BIGINT         NOT NULL COMMENT 'batch via slip',
+  `obligation_slip_id` BIGINT         NOT NULL,
   `dv_no`              VARCHAR(100)   NOT NULL,
   `amount`             DECIMAL(14, 2) NOT NULL,
   `dv_date`            DATE           NOT NULL,
@@ -662,28 +644,9 @@ CREATE TABLE `disbursement_vouchers` (
 -- 6. OUTPUT, REPORTING, JOURNAL ENTRIES & HISTORICAL UPLOADS
 -- =============================================================================
 
-CREATE TABLE `payroll_registers` (
-  `id`           BIGINT NOT NULL AUTO_INCREMENT,
-  `batch_id`     BIGINT       NOT NULL,
-  `register_no`  VARCHAR(100) NOT NULL,
-  `file_path`    VARCHAR(500) NOT NULL,
-  `generated_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `generated_by` BIGINT       NOT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_payroll_registers_batch_id` (`batch_id`),
-  UNIQUE KEY `uq_payroll_registers_register_no` (`register_no`),
-  KEY `idx_payroll_registers_generated_by` (`generated_by`),
-  CONSTRAINT `fk_payroll_registers_batch`
-    FOREIGN KEY (`batch_id`) REFERENCES `payroll_batches` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_payroll_registers_generated_by`
-    FOREIGN KEY (`generated_by`) REFERENCES `users` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
-
 CREATE TABLE `ada_forms` (
   `id`           BIGINT NOT NULL AUTO_INCREMENT,
-  `batch_id`     BIGINT         NOT NULL,
+  `payroll_id`   BIGINT         NOT NULL,
   `form_type`    ENUM('ADA', 'ADCA') NOT NULL DEFAULT 'ADA',
   `ada_no`       VARCHAR(100)   NOT NULL,
   `total_amount` DECIMAL(14, 2) NOT NULL,
@@ -692,10 +655,10 @@ CREATE TABLE `ada_forms` (
   `generated_at` DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_ada_forms_ada_no` (`ada_no`),
-  KEY `idx_ada_forms_batch_id` (`batch_id`),
+  KEY `idx_ada_forms_payroll_id` (`payroll_id`),
   KEY `idx_ada_forms_status_id` (`status_id`),
-  CONSTRAINT `fk_ada_forms_batch`
-    FOREIGN KEY (`batch_id`) REFERENCES `payroll_batches` (`id`)
+  CONSTRAINT `fk_ada_forms_payroll`
+    FOREIGN KEY (`payroll_id`) REFERENCES `payrolls` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `fk_ada_forms_status`
     FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
@@ -704,7 +667,7 @@ CREATE TABLE `ada_forms` (
 
 CREATE TABLE `bank_upload_files` (
   `id`           BIGINT NOT NULL AUTO_INCREMENT,
-  `ada_id`       BIGINT         NOT NULL COMMENT 'batch via ADA/ADCA',
+  `ada_id`       BIGINT         NOT NULL,
   `file_name`    VARCHAR(255)   NOT NULL COMMENT 'LandBank format',
   `record_count` INT            NOT NULL DEFAULT 0,
   `total_amount` DECIMAL(14, 2) NOT NULL,
@@ -717,14 +680,14 @@ CREATE TABLE `bank_upload_files` (
 ) ENGINE=InnoDB;
 
 CREATE TABLE `payslips` (
-  `id`              BIGINT NOT NULL AUTO_INCREMENT,
-  `payroll_item_id` BIGINT   NOT NULL COMMENT 'employee via item',
-  `published_at`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `viewed_at`       DATETIME NULL,
+  `id`           BIGINT NOT NULL AUTO_INCREMENT,
+  `payroll_id`   BIGINT   NOT NULL,
+  `published_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `viewed_at`    DATETIME NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_payslips_payroll_item_id` (`payroll_item_id`),
-  CONSTRAINT `fk_payslips_payroll_item`
-    FOREIGN KEY (`payroll_item_id`) REFERENCES `payroll_items` (`id`)
+  UNIQUE KEY `uq_payslips_payroll_id` (`payroll_id`),
+  CONSTRAINT `fk_payslips_payroll`
+    FOREIGN KEY (`payroll_id`) REFERENCES `payrolls` (`id`)
     ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 

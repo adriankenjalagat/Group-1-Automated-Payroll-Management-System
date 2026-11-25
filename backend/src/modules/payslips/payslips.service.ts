@@ -22,21 +22,21 @@ const PAYSLIP_SELECT_SQL = `
     ps.id,
     ps.published_at,
     ps.viewed_at,
-    pi.gross_pay,
-    pi.total_deductions AS deductions,
-    pi.net_pay,
-    pi.late_undertime_deduction,
+    p.gross_pay,
+    p.total_deductions AS deductions,
+    p.net_pay,
+    p.late_undertime_deduction,
+    p.breakdown,
     e.id AS employee_db_id,
     e.employee_no,
     TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
     o.name AS department,
     pp.label AS period,
-    pb.employment_type AS payroll_title
+    p.employment_type AS payroll_title
   FROM payslips ps
-  JOIN payroll_items pi ON pi.id = ps.payroll_item_id
-  JOIN payroll_batches pb ON pb.id = pi.batch_id
-  JOIN payroll_periods pp ON pp.id = pb.period_id
-  JOIN appointments a ON a.id = pi.appointment_id
+  JOIN payrolls p ON p.id = ps.payroll_id
+  JOIN payroll_periods pp ON pp.id = p.period_id
+  JOIN appointments a ON a.id = p.appointment_id
   JOIN employees e ON e.id = a.employee_id
   JOIN offices o ON o.id = a.office_id
 `

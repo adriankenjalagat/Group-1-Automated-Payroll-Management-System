@@ -205,22 +205,23 @@ export function computePayroll(params: {
 
 const PAYROLL_SELECT_SQL = `
   SELECT
-    pb.id,
-    pb.batch_no,
-    pb.total_gross,
-    pb.total_deductions,
-    pb.total_net,
+    p.id,
+    p.batch_no,
+    p.gross_pay,
+    p.total_deductions,
+    p.net_pay,
+    p.days_worked,
+    p.absences,
+    p.late_undertime_deduction,
+    p.breakdown,
+    p.employment_type AS emp_type_code,
+    p.created_at,
+    p.updated_at,
     st.name AS status_name,
     st.code AS status_code,
     pp.label AS period_label,
     o.name AS office_name,
     f.code AS fund_code,
-    pb.employment_type AS emp_type_code,
-    pb.employment_type AS emp_type_name,
-    pi.id AS item_id,
-    pi.days_worked,
-    pi.absences,
-    pi.late_undertime_deduction,
     e.id AS employee_db_id,
     e.employee_no,
     TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS employee_name,
@@ -228,23 +229,20 @@ const PAYROLL_SELECT_SQL = `
     a.daily_rate,
     a.hourly_rate,
     ws.step_name AS current_stage_name
-  FROM payroll_batches pb
-  JOIN statuses st ON st.id = pb.status_id
-  JOIN payroll_periods pp ON pp.id = pb.period_id
-  JOIN offices o ON o.id = pb.office_id
-  JOIN funds f ON f.id = pb.fund_id
+  FROM payrolls p
+  JOIN statuses st ON st.id = p.status_id
+  JOIN payroll_periods pp ON pp.id = p.period_id
+  JOIN offices o ON o.id = p.office_id
+  JOIN funds f ON f.id = p.fund_id
+  JOIN appointments a ON a.id = p.appointment_id
+  JOIN employees e ON e.id = a.employee_id
   LEFT JOIN LATERAL (
-    SELECT * FROM payroll_items WHERE batch_id = pb.id ORDER BY id ASC LIMIT 1
-  ) pi ON TRUE
-  LEFT JOIN appointments a ON a.id = pi.appointment_id
-  LEFT JOIN employees e ON e.id = a.employee_id
-  LEFT JOIN LATERAL (
-    SELECT * FROM approval_requests WHERE entity_type = 'PAYROLL_BATCH' AND entity_id = pb.id ORDER BY id DESC LIMIT 1
+    SELECT * FROM approval_requests WHERE entity_type = 'PAYROLL' AND entity_id = p.id ORDER BY id DESC LIMIT 1
   ) ar ON TRUE
   LEFT JOIN workflow_steps ws ON ws.template_id = ar.template_id AND ws.step_order = ar.current_step
 `
 
-function mapBatchRow(row: any): PayrollRecord {
+function mapPayrollRow(row: any): PayrollRecord {
   const locked = row.status_code === 'APPROVED' || row.status_code === 'DISBURSED'
   return {
     id: Number(row.id),
@@ -252,22 +250,25 @@ function mapBatchRow(row: any): PayrollRecord {
     employeeName: row.employee_name || row.batch_no,
     department: row.office_name || '',
     period: row.period_label || 'November 2026',
-    grossPay: parseFloat(row.total_gross) || 0,
+    grossPay: parseFloat(row.gross_pay) || 0,
     deductions: parseFloat(row.total_deductions) || 0,
-    netPay: parseFloat(row.total_net) || 0,
+    netPay: parseFloat(row.net_pay) || 0,
     status: row.status_name || 'Pending',
     payrollTypeId: String(row.emp_type_code || 'REGULAR').toLowerCase(),
-    payrollTypeName: row.emp_type_name || 'Regular Monthly Payroll',
+    payrollTypeName: row.emp_type_code || 'REGULAR',
     fundSource: row.fund_code || 'F01',
     payBasis: row.daily_rate ? 'Daily' : row.hourly_rate ? 'Hourly' : 'Monthly',
-    basicPay: parseFloat(row.monthly_rate || row.total_gross) || 0,
+    basicPay: parseFloat(row.monthly_rate || row.gross_pay) || 0,
     attendanceDeductions: parseFloat(row.late_undertime_deduction) || 0,
+    breakdown: row.breakdown && Object.keys(row.breakdown).length > 0 ? row.breakdown : undefined,
     locked,
     stage: locked ? 'Completed' : row.current_stage_name || 'Cost Center Signatory',
     currentApprovalHolder: locked ? 'Completed' : row.current_stage_name || 'Cost Center Signatory',
     readyForDv: locked,
     computationVersion: 1,
     corrections: [],
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : undefined,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : undefined,
   }
 }
 
@@ -279,16 +280,16 @@ export const payrollService = {
       queryText += ` WHERE LOWER(pp.label) = LOWER($1)`
       params.push(period)
     }
-    queryText += ` ORDER BY pb.id ASC`
+    queryText += ` ORDER BY p.id ASC`
 
     const res = await pool.query(queryText, params)
-    return res.rows.map(mapBatchRow)
+    return res.rows.map(mapPayrollRow)
   },
 
   async findById(id: number): Promise<PayrollRecord | undefined> {
-    const res = await pool.query(`${PAYROLL_SELECT_SQL} WHERE pb.id = $1 LIMIT 1`, [id])
+    const res = await pool.query(`${PAYROLL_SELECT_SQL} WHERE p.id = $1 LIMIT 1`, [id])
     if (res.rows.length === 0) return undefined
-    return mapBatchRow(res.rows[0])
+    return mapPayrollRow(res.rows[0])
   },
 
   async create(
@@ -393,66 +394,36 @@ export const payrollService = {
       ).rows[0].id
       const batchNo = `PB-${Date.now()}-${Math.floor(Math.random() * 1000)}`
 
-      const batchIns = await client.query(
-        `INSERT INTO payroll_batches (
-           period_id, office_id, cost_center_id, fund_id, employment_type,
-           batch_no, total_gross, total_deductions, total_net, status_id
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      const payrollIns = await client.query(
+        `INSERT INTO payrolls (
+           batch_no, period_id, office_id, cost_center_id, fund_id, appointment_id,
+           employment_type, days_worked, absences, late_undertime_deduction,
+           proration_factor, gross_pay, total_deductions, net_pay, breakdown, status_id
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6,
+           $7, $8, $9, $10,
+           1.0000, $11, $12, $13, $14::jsonb, $15
+         )
          RETURNING id`,
         [
+          batchNo,
           periodId,
           appt.office_id,
           appt.cost_center_id,
           appt.fund_id,
-          appt.emp_type_code || 'REGULAR',
-          batchNo,
-          breakdown.grossPay,
-          breakdown.totalDeductions,
-          breakdown.netPay,
-          pendingStId,
-        ],
-      )
-      const batchId = Number(batchIns.rows[0].id)
-
-      const itemIns = await client.query(
-        `INSERT INTO payroll_items (
-           batch_id, appointment_id, days_worked, absences,
-           late_undertime_deduction, proration_factor,
-           gross_pay, total_deductions, net_pay
-         ) VALUES ($1, $2, $3, $4, $5, 1.0000, $6, $7, $8)
-         RETURNING id`,
-        [
-          batchId,
           appt.id,
+          appt.emp_type_code || 'REGULAR',
           input.daysWorked ?? 22,
           input.absences ?? 0,
           breakdown.attendanceDeductions.totalAttendanceDeductions,
           breakdown.grossPay,
           breakdown.totalDeductions,
           breakdown.netPay,
+          JSON.stringify(breakdown),
+          pendingStId,
         ],
       )
-      const itemId = Number(itemIns.rows[0].id)
-
-      // Persist breakdown lines in payroll_item_lines
-      const linePairs: Array<[string, number]> = [
-        ['BASIC', breakdown.basicPay],
-        ['PERA', breakdown.peraAllowance],
-        ['GSIS', breakdown.mandatoryDeductions.gsis],
-        ['PHILHEALTH', breakdown.mandatoryDeductions.philHealth],
-        ['PAGIBIG', breakdown.mandatoryDeductions.pagIbig],
-        ['WTAX', breakdown.mandatoryDeductions.withholdingTax],
-        ['ATT_DED', breakdown.attendanceDeductions.totalAttendanceDeductions],
-      ]
-      for (const [code, amount] of linePairs) {
-        if (amount > 0) {
-          await client.query(
-            `INSERT INTO payroll_item_lines (payroll_item_id, component_id, amount)
-             SELECT $1, id, $2 FROM pay_components WHERE code = $3 LIMIT 1`,
-            [itemId, amount, code],
-          )
-        }
-      }
+      const payrollId = Number(payrollIns.rows[0].id)
 
       // Initialize approval_request
       const wtId = (
@@ -468,24 +439,22 @@ export const payrollService = {
       if (wtId && appPendSt) {
         await client.query(
           `INSERT INTO approval_requests (template_id, entity_type, entity_id, current_step, status_id, requested_by)
-           VALUES ($1, 'PAYROLL_BATCH', $2, 1, $3, $4)`,
-          [wtId, batchId, appPendSt, reqBy],
+           VALUES ($1, 'PAYROLL', $2, 1, $3, $4)`,
+          [wtId, payrollId, appPendSt, reqBy],
         )
       }
 
       await auditService.logAction(
         reqBy,
-        `Created payroll batch #${batchId} for ${appt.full_name} (${input.period})`,
-        { payrollId: batchId, period: input.period, netPay: breakdown.netPay },
+        `Created payroll #${payrollId} for ${appt.full_name} (${input.period})`,
+        { payrollId, period: input.period, netPay: breakdown.netPay },
         ip || null,
-        'PAYROLL_BATCH',
-        batchId,
+        'PAYROLL',
+        payrollId,
       )
 
       await client.query('COMMIT')
-      const created = (await payrollService.findById(batchId))!
-      created.breakdown = breakdown
-      return created
+      return (await payrollService.findById(payrollId))!
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
@@ -539,18 +508,16 @@ export const payrollService = {
     try {
       await client.query('BEGIN')
       await client.query(
-        `UPDATE payroll_batches SET total_gross = $1, total_deductions = $2, total_net = $3 WHERE id = $4`,
-        [newBreakdown.grossPay, newBreakdown.totalDeductions, newBreakdown.netPay, id],
-      )
-      await client.query(
-        `UPDATE payroll_items
+        `UPDATE payrolls
          SET days_worked = COALESCE($1, days_worked),
              absences = COALESCE($2, absences),
              late_undertime_deduction = $3,
              gross_pay = $4,
              total_deductions = $5,
-             net_pay = $6
-         WHERE batch_id = $7`,
+             net_pay = $6,
+             breakdown = $7::jsonb,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $8`,
         [
           data.daysWorked ?? null,
           data.absences ?? null,
@@ -558,6 +525,7 @@ export const payrollService = {
           newBreakdown.grossPay,
           newBreakdown.totalDeductions,
           newBreakdown.netPay,
+          JSON.stringify(newBreakdown),
           id,
         ],
       )
@@ -567,14 +535,12 @@ export const payrollService = {
         `Recalculated payroll #${id} (${existing.netPay} -> ${newBreakdown.netPay})`,
         { payrollId: id, reason: data.reason, newNet: newBreakdown.netPay },
         ip || null,
-        'PAYROLL_BATCH',
+        'PAYROLL',
         id,
       )
 
       await client.query('COMMIT')
-      const updated = (await payrollService.findById(id))!
-      updated.breakdown = newBreakdown
-      return updated
+      return (await payrollService.findById(id))!
     } catch (err) {
       await client.query('ROLLBACK')
       throw err
@@ -592,8 +558,8 @@ export const payrollService = {
     try {
       await client.query('BEGIN')
 
-      const bRes = await client.query(`SELECT * FROM payroll_batches WHERE id = $1 FOR UPDATE`, [id])
-      if (bRes.rows.length === 0) {
+      const pRes = await client.query(`SELECT * FROM payrolls WHERE id = $1 FOR UPDATE`, [id])
+      if (pRes.rows.length === 0) {
         const err = new Error(`Payroll record #${id} not found.`)
         ;(err as any).statusCode = 404
         throw err
@@ -604,25 +570,25 @@ export const payrollService = {
       const appSt = (
         await client.query(`SELECT id FROM statuses WHERE category = 'PAYROLL' AND code = 'APPROVED' LIMIT 1`)
       ).rows[0].id
-      await client.query(`UPDATE payroll_batches SET status_id = $1 WHERE id = $2`, [appSt, id])
+      await client.query(`UPDATE payrolls SET status_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [appSt, id])
 
       const schedSt = (
         await client.query(`SELECT id FROM statuses WHERE category = 'DISBURSEMENT' AND code = 'SCHEDULED' LIMIT 1`)
       ).rows[0].id
       const slipNo = `OBL-${new Date().getFullYear()}-${String(id).padStart(4, '0')}`
       await client.query(
-        `INSERT INTO obligation_slips (batch_id, slip_no, amount, status_id)
+        `INSERT INTO obligation_slips (payroll_id, slip_no, amount, status_id)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (slip_no) DO NOTHING`,
-        [id, slipNo, bRes.rows[0].total_gross, schedSt],
+        [id, slipNo, pRes.rows[0].gross_pay, schedSt],
       )
 
       await auditService.logAction(
         actingUserId || null,
-        `Locked payroll batch #${id}`,
+        `Locked payroll #${id}`,
         { payrollId: id, status: 'Approved', locked: true },
         ip || null,
-        'PAYROLL_BATCH',
+        'PAYROLL',
         id,
       )
 

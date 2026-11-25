@@ -330,8 +330,33 @@ export async function runMigrations(): Promise<void> {
       `)
     }
 
-    // 3. Apply the 40-table normalized PostgreSQL schema directly in `public`
-    console.log('[Migration] Applying 40-table normalized schema.sql...')
+    // 2d. If upgrading an existing DB that still has split payroll_batches/items/lines/registers, merge into single `payrolls` table
+    const hasSplitPayroll = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name IN ('payroll_batches', 'payroll_items', 'payroll_item_lines', 'payroll_registers')
+      LIMIT 1
+    `)
+    if (hasSplitPayroll.rows.length > 0) {
+      console.log('[Migration] Merging payroll_batches, payroll_items, payroll_item_lines, and payroll_registers into payrolls...')
+      await client.query(`
+        DROP TABLE IF EXISTS
+          payroll_item_lines,
+          payroll_registers,
+          payslips,
+          bank_upload_files,
+          ada_forms,
+          journal_entry_lines,
+          journal_entries,
+          disbursement_vouchers,
+          obligation_slips,
+          payroll_items,
+          payroll_batches
+        CASCADE;
+      `)
+    }
+
+    // 3. Apply the 37-table normalized PostgreSQL schema directly in `public`
+    console.log('[Migration] Applying 37-table normalized schema.sql (payrolls unified)...')
     await client.query(readSqlFile('schema.sql'))
 
     // 4. Seed required lookup & reference data (idempotent)
