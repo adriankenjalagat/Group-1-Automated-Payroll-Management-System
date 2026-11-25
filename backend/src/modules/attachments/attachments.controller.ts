@@ -206,15 +206,12 @@ export const attachmentsController = {
         return
       }
 
-      // Look up the submission and file path in the 43-table schema
+      // Look up the document and file path in the unified `documents` table
       const attRes = await pool.query(
-        `SELECT ds.id, ds.employee_id, e.employee_no, si.file_path
-         FROM document_submissions ds
-         LEFT JOIN employees e ON ds.employee_id = e.id
-         LEFT JOIN LATERAL (
-           SELECT file_path FROM submission_items WHERE submission_id = ds.id ORDER BY id ASC LIMIT 1
-         ) si ON TRUE
-         WHERE ds.id = $1
+        `SELECT d.id, d.employee_id, e.employee_no, d.file_path
+         FROM documents d
+         LEFT JOIN employees e ON d.employee_id = e.id
+         WHERE d.id = $1
          LIMIT 1`,
         [numericId],
       )

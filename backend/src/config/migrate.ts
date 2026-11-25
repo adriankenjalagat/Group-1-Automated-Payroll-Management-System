@@ -262,20 +262,6 @@ export async function runMigrations(): Promise<void> {
 
             ALTER TABLE historical_uploads DROP COLUMN IF EXISTS employment_type_id CASCADE;
           END IF;
-
-          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'document_type_employment_types' AND column_name = 'employment_type_id') THEN
-            DROP TABLE IF EXISTS document_type_employment_types CASCADE;
-            CREATE TABLE document_type_employment_types (
-              document_type_id BIGINT NOT NULL,
-              employment_type VARCHAR(50) NOT NULL
-                CHECK (employment_type IN ('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER')),
-              PRIMARY KEY (document_type_id, employment_type),
-              CONSTRAINT fk_dtet_document_type
-                FOREIGN KEY (document_type_id) REFERENCES document_types (id)
-                ON DELETE CASCADE ON UPDATE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_dtet_employment_type ON document_type_employment_types (employment_type);
-          END IF;
         END $$;
 
         DROP TABLE IF EXISTS employment_types CASCADE;
@@ -373,8 +359,29 @@ export async function runMigrations(): Promise<void> {
       `)
     }
 
-    // 3. Apply the 36-table normalized PostgreSQL schema directly in `public`
-    console.log('[Migration] Applying 36-table normalized schema.sql (workflows unified)...')
+    // 2f. If upgrading an existing DB that still has split document tables, merge into single `documents` table
+    const hasSplitDocuments = await client.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('document_types', 'document_type_employment_types', 'document_submissions', 'submission_items')
+      LIMIT 1
+    `)
+    if (hasSplitDocuments.rows.length > 0) {
+      console.log('[Migration] Merging document_types, document_type_employment_types, document_submissions, and submission_items into documents...')
+      await client.query(`
+        DROP TABLE IF EXISTS
+          transmittal_items,
+          logbook_verifications,
+          submission_items,
+          document_submissions,
+          document_type_employment_types,
+          document_types
+        CASCADE;
+      `)
+    }
+
+    // 3. Apply the 33-table normalized PostgreSQL schema directly in `public`
+    console.log('[Migration] Applying 33-table normalized schema.sql (documents unified)...')
     await client.query(readSqlFile('schema.sql'))
 
     // 4. Seed required lookup & reference data (idempotent)
@@ -466,18 +473,7 @@ export async function runMigrations(): Promise<void> {
       ON CONFLICT (code) DO NOTHING;
     `)
 
-    // Default document type & payroll period if empty
-    const docTypeCount = await client.query('SELECT COUNT(*)::int AS cnt FROM document_types')
-    if (docTypeCount.rows[0].cnt === 0) {
-      await client.query(`
-        INSERT INTO document_types (name, is_required) VALUES
-          ('Daily Time Record (DTR)', TRUE),
-          ('Accomplishment Report', TRUE),
-          ('Appointment / Contract', FALSE),
-          ('Supporting Document', FALSE);
-      `)
-    }
-
+    // Default payroll period if empty
     const periodCount = await client.query('SELECT COUNT(*)::int AS cnt FROM payroll_periods')
     if (periodCount.rows[0].cnt === 0) {
       await client.query(`
@@ -566,7 +562,7 @@ export async function runMigrations(): Promise<void> {
     }
 
     await client.query('COMMIT')
-    console.log('[Migration] All 43-table schema migrations and checks completed successfully.')
+    console.log('[Migration] All 33-table schema migrations and checks completed successfully.')
   } catch (error) {
     await client.query('ROLLBACK')
     console.error('[Migration] Migration failed:', error)

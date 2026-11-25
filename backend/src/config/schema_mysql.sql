@@ -1,6 +1,6 @@
 -- =============================================================================
 -- schema_mysql.sql
--- MySQL 8.0+ / MySQL Workbench Compatible Schema (All 43 Tables)
+-- MySQL 8.0+ / MySQL Workbench Compatible Schema (33 Tables, documents unified)
 -- MSU-Naawan Automated Payroll Management System
 -- Ready for:
 --   1) MySQL Workbench -> File -> Import -> Reverse Engineer MySQL Create Script
@@ -262,86 +262,58 @@ CREATE TABLE `employee_components` (
 -- 3. DOCUMENT TRACKING
 -- =============================================================================
 
-CREATE TABLE `document_types` (
-  `id`          BIGINT NOT NULL AUTO_INCREMENT,
-  `name`        VARCHAR(150) NOT NULL,
-  `is_required` TINYINT(1)   NOT NULL DEFAULT 1,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB;
-
-CREATE TABLE `document_type_employment_types` (
-  `document_type_id` BIGINT NOT NULL,
-  `employment_type`  ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NOT NULL,
-  PRIMARY KEY (`document_type_id`, `employment_type`),
-  KEY `idx_dtet_employment_type` (`employment_type`),
-  CONSTRAINT `fk_dtet_document_type`
-    FOREIGN KEY (`document_type_id`) REFERENCES `document_types` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB;
-
-CREATE TABLE `document_submissions` (
-  `id`           BIGINT NOT NULL AUTO_INCREMENT,
-  `period_id`    BIGINT     NOT NULL,
-  `office_id`    BIGINT     NOT NULL,
-  `employee_id`  BIGINT     NOT NULL,
-  `submitted_by` BIGINT     NOT NULL,
-  `submitted_at` DATETIME   NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `is_late`      TINYINT(1) NOT NULL DEFAULT 0,
-  `status_id`    BIGINT     NOT NULL,
+CREATE TABLE `documents` (
+  `id`              BIGINT NOT NULL AUTO_INCREMENT,
+  `period_id`       BIGINT       NOT NULL,
+  `office_id`       BIGINT       NOT NULL,
+  `employee_id`     BIGINT       NOT NULL,
+  `submitted_by`    BIGINT       NOT NULL,
+  `document_type`   VARCHAR(150) NOT NULL DEFAULT 'Supporting Document',
+  `employment_type` ENUM('REGULAR', 'CONTRACTUAL', 'JO', 'LECTURER') NULL,
+  `is_required`     TINYINT(1)   NOT NULL DEFAULT 1,
+  `file_path`       VARCHAR(500) NULL,
+  `is_complete`     TINYINT(1)   NOT NULL DEFAULT 0,
+  `remarks`         VARCHAR(500) NULL,
+  `submitted_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `is_late`         TINYINT(1)   NOT NULL DEFAULT 0,
+  `status_id`       BIGINT       NOT NULL,
   PRIMARY KEY (`id`),
-  KEY `idx_doc_submissions_period_office` (`period_id`, `office_id`),
-  KEY `idx_doc_submissions_office_id` (`office_id`),
-  KEY `idx_doc_submissions_employee_id` (`employee_id`),
-  KEY `idx_doc_submissions_submitted_by` (`submitted_by`),
-  KEY `idx_doc_submissions_status_id` (`status_id`),
-  CONSTRAINT `fk_doc_submissions_period`
+  KEY `idx_documents_period_office` (`period_id`, `office_id`),
+  KEY `idx_documents_office_id` (`office_id`),
+  KEY `idx_documents_employee_id` (`employee_id`),
+  KEY `idx_documents_submitted_by` (`submitted_by`),
+  KEY `idx_documents_status_id` (`status_id`),
+  KEY `idx_documents_type` (`document_type`),
+  CONSTRAINT `fk_documents_period`
     FOREIGN KEY (`period_id`) REFERENCES `payroll_periods` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_doc_submissions_office`
+  CONSTRAINT `fk_documents_office`
     FOREIGN KEY (`office_id`) REFERENCES `offices` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_doc_submissions_employee`
+  CONSTRAINT `fk_documents_employee`
     FOREIGN KEY (`employee_id`) REFERENCES `employees` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_doc_submissions_submitted_by`
+  CONSTRAINT `fk_documents_submitted_by`
     FOREIGN KEY (`submitted_by`) REFERENCES `users` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT `fk_doc_submissions_status`
+  CONSTRAINT `fk_documents_status`
     FOREIGN KEY (`status_id`) REFERENCES `statuses` (`id`)
-    ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
-
-CREATE TABLE `submission_items` (
-  `id`               BIGINT NOT NULL AUTO_INCREMENT,
-  `submission_id`    BIGINT       NOT NULL,
-  `document_type_id` BIGINT       NOT NULL,
-  `file_path`        VARCHAR(500) NULL,
-  `is_complete`      TINYINT(1)   NOT NULL DEFAULT 0,
-  `remarks`          VARCHAR(500) NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_submission_items_submission_id` (`submission_id`),
-  KEY `idx_submission_items_doc_type_id` (`document_type_id`),
-  CONSTRAINT `fk_submission_items_submission`
-    FOREIGN KEY (`submission_id`) REFERENCES `document_submissions` (`id`)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_submission_items_doc_type`
-    FOREIGN KEY (`document_type_id`) REFERENCES `document_types` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE `logbook_verifications` (
   `id`                 BIGINT NOT NULL AUTO_INCREMENT,
-  `submission_id`      BIGINT       NOT NULL,
+  `document_id`        BIGINT       NOT NULL,
   `verification_stage` ENUM('SUPERVISOR', 'HR') NOT NULL,
   `verified_by`        BIGINT       NOT NULL,
   `verified_at`        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `result`             ENUM('PASSED', 'FAILED') NOT NULL,
   `remarks`            VARCHAR(500) NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_logbook_submission_stage` (`submission_id`, `verification_stage`),
+  UNIQUE KEY `uq_logbook_document_stage` (`document_id`, `verification_stage`),
   KEY `idx_logbook_verifications_verified_by` (`verified_by`),
-  CONSTRAINT `fk_logbook_verifications_submission`
-    FOREIGN KEY (`submission_id`) REFERENCES `document_submissions` (`id`)
+  CONSTRAINT `fk_logbook_verifications_document`
+    FOREIGN KEY (`document_id`) REFERENCES `documents` (`id`)
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `fk_logbook_verifications_verified_by`
     FOREIGN KEY (`verified_by`) REFERENCES `users` (`id`)
@@ -379,14 +351,14 @@ CREATE TABLE `transmittals` (
 
 CREATE TABLE `transmittal_items` (
   `transmittal_id` BIGINT NOT NULL,
-  `submission_id`  BIGINT NOT NULL,
-  PRIMARY KEY (`transmittal_id`, `submission_id`),
-  KEY `idx_transmittal_items_submission_id` (`submission_id`),
+  `document_id`    BIGINT NOT NULL,
+  PRIMARY KEY (`transmittal_id`, `document_id`),
+  KEY `idx_transmittal_items_document_id` (`document_id`),
   CONSTRAINT `fk_transmittal_items_transmittal`
     FOREIGN KEY (`transmittal_id`) REFERENCES `transmittals` (`id`)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_transmittal_items_submission`
-    FOREIGN KEY (`submission_id`) REFERENCES `document_submissions` (`id`)
+  CONSTRAINT `fk_transmittal_items_document`
+    FOREIGN KEY (`document_id`) REFERENCES `documents` (`id`)
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 

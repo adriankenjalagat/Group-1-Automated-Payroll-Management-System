@@ -59,33 +59,29 @@ export interface SubmissionRecord {
 
 const SUBMISSION_SELECT_SQL = `
   SELECT
-    ds.id,
-    ds.submitted_at,
-    ds.is_late,
+    d.id,
+    d.submitted_at,
+    d.is_late,
     e.employee_no,
     TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
     pp.label AS period_label,
     st.name AS status_name,
-    si.file_path,
-    si.remarks AS item_remarks,
-    dt.name AS document_type_name,
+    d.file_path,
+    d.remarks AS item_remarks,
+    d.document_type AS document_type_name,
     lv_sup.verified_at AS sup_verified_at,
     lv_sup.remarks AS sup_remarks,
     u_sup.username AS sup_username,
     lv_hr.verified_at AS hr_verified_at,
     lv_hr.remarks AS hr_remarks,
     u_hr.username AS hr_username
-  FROM document_submissions ds
-  JOIN employees e ON e.id = ds.employee_id
-  JOIN payroll_periods pp ON pp.id = ds.period_id
-  JOIN statuses st ON st.id = ds.status_id
-  LEFT JOIN LATERAL (
-    SELECT * FROM submission_items WHERE submission_id = ds.id ORDER BY id ASC LIMIT 1
-  ) si ON TRUE
-  LEFT JOIN document_types dt ON dt.id = si.document_type_id
-  LEFT JOIN logbook_verifications lv_sup ON lv_sup.submission_id = ds.id AND lv_sup.verification_stage = 'SUPERVISOR'
+  FROM documents d
+  JOIN employees e ON e.id = d.employee_id
+  JOIN payroll_periods pp ON pp.id = d.period_id
+  JOIN statuses st ON st.id = d.status_id
+  LEFT JOIN logbook_verifications lv_sup ON lv_sup.document_id = d.id AND lv_sup.verification_stage = 'SUPERVISOR'
   LEFT JOIN users u_sup ON u_sup.id = lv_sup.verified_by
-  LEFT JOIN logbook_verifications lv_hr ON lv_hr.submission_id = ds.id AND lv_hr.verification_stage = 'HR'
+  LEFT JOIN logbook_verifications lv_hr ON lv_hr.document_id = d.id AND lv_hr.verification_stage = 'HR'
   LEFT JOIN users u_hr ON u_hr.id = lv_hr.verified_by
 `
 
@@ -145,11 +141,11 @@ export const attachmentsService = {
     const params: any[] = []
 
     if (employeeId) {
-      queryText += ` WHERE e.employee_no = $1 OR (ds.employee_id::text = $1 AND $1 ~ '^[0-9]+$')`
+      queryText += ` WHERE e.employee_no = $1 OR (d.employee_id::text = $1 AND $1 ~ '^[0-9]+$')`
       params.push(employeeId.trim())
     }
 
-    queryText += ` ORDER BY ds.id DESC`
+    queryText += ` ORDER BY d.id DESC`
 
     const res = await pool.query(queryText, params)
     return res.rows.map(mapSubmissionRow)
@@ -159,7 +155,7 @@ export const attachmentsService = {
     const numId = extractNumericSubmissionId(id)
     if (numId === null) return undefined
 
-    const res = await pool.query(`${SUBMISSION_SELECT_SQL} WHERE ds.id = $1 LIMIT 1`, [numId])
+    const res = await pool.query(`${SUBMISSION_SELECT_SQL} WHERE d.id = $1 LIMIT 1`, [numId])
     if (res.rows.length === 0) return undefined
     return mapSubmissionRow(res.rows[0])
   },
@@ -170,7 +166,7 @@ export const attachmentsService = {
     ip?: string | null,
   ): Promise<SubmissionRecord> {
     const empRes = await pool.query(
-      `SELECT e.id, e.employee_no,
+      `SELECT e.id, e.employee_no, e.employment_type,
               TRIM(CONCAT_WS(' ', e.first_name, e.middle_name, e.last_name)) AS full_name,
               a.office_id
        FROM employees e
@@ -234,35 +230,32 @@ export const attachmentsService = {
             .rows[0].id,
       )
 
-      const dsRes = await client.query(
-        `INSERT INTO document_submissions (period_id, office_id, employee_id, submitted_by, submitted_at, is_late, status_id)
-         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6)
+      const isRequired = ['daily time record (dtr)', 'accomplishment report'].includes(docTypeName.toLowerCase())
+
+      const docRes = await client.query(
+        `INSERT INTO documents (
+           period_id, office_id, employee_id, submitted_by,
+           document_type, employment_type, is_required,
+           file_path, is_complete, remarks,
+           submitted_at, is_late, status_id
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, CURRENT_TIMESTAMP, $10, $11)
          RETURNING id`,
-        [periodId, officeId, emp.id, submittedBy, statusCode === 'LATE', statusId],
+        [
+          periodId,
+          officeId,
+          emp.id,
+          submittedBy,
+          docTypeName,
+          emp.employment_type || null,
+          isRequired,
+          `/uploads/${firstFilename}`,
+          data.remark || null,
+          statusCode === 'LATE',
+          statusId,
+        ],
       )
-      const submissionId = Number(dsRes.rows[0].id)
-
-      // Resolve document type
-      let dtRes = await client.query(
-        `SELECT id FROM document_types WHERE LOWER(name) = LOWER($1) LIMIT 1`,
-        [docTypeName],
-      )
-      let docTypeId: number
-      if (dtRes.rows.length > 0) {
-        docTypeId = Number(dtRes.rows[0].id)
-      } else {
-        const dtIns = await client.query(
-          `INSERT INTO document_types (name, is_required) VALUES ($1, FALSE) RETURNING id`,
-          [docTypeName],
-        )
-        docTypeId = Number(dtIns.rows[0].id)
-      }
-
-      await client.query(
-        `INSERT INTO submission_items (submission_id, document_type_id, file_path, is_complete, remarks)
-         VALUES ($1, $2, $3, TRUE, $4)`,
-        [submissionId, docTypeId, `/uploads/${firstFilename}`, data.remark || null],
-      )
+      const submissionId = Number(docRes.rows[0].id)
 
       await auditService.logAction(
         submittedBy,
@@ -304,7 +297,7 @@ export const attachmentsService = {
           [updateData.status.toUpperCase()],
         )
         if (stRes.rows.length > 0) {
-          await client.query(`UPDATE document_submissions SET status_id = $1 WHERE id = $2`, [
+          await client.query(`UPDATE documents SET status_id = $1 WHERE id = $2`, [
             stRes.rows[0].id,
             numId,
           ])
@@ -312,7 +305,7 @@ export const attachmentsService = {
       }
 
       if (updateData.remark !== undefined) {
-        await client.query(`UPDATE submission_items SET remarks = $1 WHERE submission_id = $2`, [
+        await client.query(`UPDATE documents SET remarks = $1 WHERE id = $2`, [
           updateData.remark,
           numId,
         ])
@@ -324,9 +317,9 @@ export const attachmentsService = {
 
       if (updateData.supervisorValidation) {
         await client.query(
-          `INSERT INTO logbook_verifications (submission_id, verification_stage, verified_by, verified_at, result, remarks)
+          `INSERT INTO logbook_verifications (document_id, verification_stage, verified_by, verified_at, result, remarks)
            VALUES ($1, 'SUPERVISOR', $2, CURRENT_TIMESTAMP, 'PASSED', $3)
-           ON CONFLICT (submission_id, verification_stage)
+           ON CONFLICT (document_id, verification_stage)
            DO UPDATE SET verified_by = EXCLUDED.verified_by, verified_at = CURRENT_TIMESTAMP, result = 'PASSED', remarks = EXCLUDED.remarks`,
           [numId, verifierId, updateData.supervisorValidation.remarks || null],
         )
@@ -334,9 +327,9 @@ export const attachmentsService = {
 
       if (updateData.hrVerification) {
         await client.query(
-          `INSERT INTO logbook_verifications (submission_id, verification_stage, verified_by, verified_at, result, remarks)
+          `INSERT INTO logbook_verifications (document_id, verification_stage, verified_by, verified_at, result, remarks)
            VALUES ($1, 'HR', $2, CURRENT_TIMESTAMP, 'PASSED', $3)
-           ON CONFLICT (submission_id, verification_stage)
+           ON CONFLICT (document_id, verification_stage)
            DO UPDATE SET verified_by = EXCLUDED.verified_by, verified_at = CURRENT_TIMESTAMP, result = 'PASSED', remarks = EXCLUDED.remarks`,
           [numId, verifierId, updateData.hrVerification.remarks || null],
         )
